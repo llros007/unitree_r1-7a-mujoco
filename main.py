@@ -81,10 +81,10 @@ class KeyboardViewer:
             action = mujoco.mjtMouse.mjMOUSE_ZOOM
         else:
             return
-        mujoco.mjv_moveCamera(self.env.model, action, dx / height, dy / height, self.scene, self.camera)
+        mujoco.mjv_moveCamera(self.env.model, action, dx / height, dy / height, self.camera)
 
     def on_scroll(self, window, x, y):
-        mujoco.mjv_moveCamera(self.env.model, mujoco.mjtMouse.mjMOUSE_ZOOM, 0., -0.05 * y, self.scene, self.camera)
+        mujoco.mjv_moveCamera(self.env.model, mujoco.mjtMouse.mjMOUSE_ZOOM, 0., -0.05 * y, self.camera)
 
     def controls(self, dt):
         if self.env.paused:
