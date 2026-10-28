@@ -1,0 +1,122 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mujoco model="R1-7A keyboard grasp">
+  <compiler angle="radian" meshdir="meshes" inertiafromgeom="false" />
+  <option timestep="0.002" integrator="implicitfast" cone="elliptic" iterations="80" gravity="0 0 -9.81" />
+  <size njmax="2000" nconmax="400" />
+  <visual>
+    <global offwidth="1280" offheight="900" />
+    <headlight ambient="0.4 0.4 0.4" diffuse="0.7 0.7 0.7" />
+  </visual>
+  <default>
+    <joint damping="1.5" armature="0.015" />
+    <geom friction="1.2 0.01 0.001" solref="0.006 1" solimp="0.95 0.99 0.001" condim="4" />
+  </default>
+  <asset>
+    <texture name="grid" type="2d" builtin="checker" rgb1="0.12 0.16 0.22" rgb2="0.18 0.23 0.30" width="512" height="512" />
+    <material name="floor_mat" texture="grid" texrepeat="6 6" reflectance="0.1" />
+    <material name="arm_silver" rgba="0.70 0.73 0.78 1" specular="0.45" shininess="0.5" reflectance="0.12" />
+    <material name="arm_interface" rgba="0.10 0.11 0.13 1" specular="0.25" shininess="0.3" />
+    <mesh name="base_link" file="base_link.STL" />
+    <mesh name="Link1" file="Link1.STL" />
+    <mesh name="Link2" file="Link2.STL" />
+    <mesh name="Link3" file="Link3.STL" />
+    <mesh name="Link4" file="Link4.STL" />
+    <mesh name="Link5" file="Link5.STL" />
+    <mesh name="Link6" file="Link6.STL" />
+    <mesh name="Link7" file="Link7.STL" />
+    <mesh name="xle_fixed_holder" file="../gripper/fixed_holder.stl" />
+    <mesh name="xle_moving_holder" file="../gripper/moving_holder.stl" />
+    <mesh name="xle_fixed_fin" file="../gripper/fixed_fin.stl" />
+    <mesh name="xle_moving_fin" file="../gripper/moving_fin.stl" />
+  </asset>
+  <worldbody>
+    <light pos="0 -0.5 2.5" dir="0 0 -1" diffuse="0.8 0.8 0.8" castshadow="true" />
+    <geom name="floor" type="plane" size="2 2 0.1" material="floor_mat" conaffinity="7" />
+    <geom name="table" type="box" pos="0 0.15 0.565" size="0.50 0.45 0.035" rgba="0.36 0.43 0.51 1" conaffinity="7" />
+    <geom type="box" pos="-0.42 -0.22 0.265" size="0.025 0.025 0.265" rgba="0.15 0.19 0.24 1" conaffinity="7" />
+    <geom type="box" pos="-0.42 0.52 0.265" size="0.025 0.025 0.265" rgba="0.15 0.19 0.24 1" conaffinity="7" />
+    <geom type="box" pos="0.42 -0.22 0.265" size="0.025 0.025 0.265" rgba="0.15 0.19 0.24 1" conaffinity="7" />
+    <geom type="box" pos="0.42 0.52 0.265" size="0.025 0.025 0.265" rgba="0.15 0.19 0.24 1" conaffinity="7" />
+    <geom name="base_pedestal" type="cylinder" pos="0 0 0.625" size="0.083 0.025" rgba="0.12 0.17 0.23 1" conaffinity="7" />
+    <body name="base_link" pos="0 0 0.676" gravcomp="1">
+      <body name="Link1" pos="0 0 0.069" euler="0 0 0" gravcomp="1">
+        <joint name="J1" type="hinge" axis="0 0 -1" range="-2.723 2.723" />
+        <body name="Link2" pos="0 0 0.0469" euler="0 0 0" gravcomp="1">
+          <joint name="J2" type="hinge" axis="1 0 0" range="0 3.1416" />
+          <body name="Link3" pos="0 0.1085 -0.0047926" euler="0 0 0" gravcomp="1">
+            <joint name="J3" type="hinge" axis="0 1 0" range="-0.349 3.491" />
+            <body name="Link4" pos="0.025 0.082408 0.016191" euler="0 0 0" gravcomp="1">
+              <joint name="J4" type="hinge" axis="-1 0 0" range="0 3.1415" />
+              <body name="Link5" pos="-0.022314 -0.10786 0.062877" euler="-0.017453 0 0" gravcomp="1">
+                <joint name="J5" type="hinge" axis="0 1 0" range="-2.269 2.269" />
+                <body name="Link6" pos="-1.1462E-05 -0.1072 0.00069991" euler="0 -0.016375 0" gravcomp="1">
+                  <joint name="J6" type="hinge" axis="-1 0 0" range="-0.524 0.524" />
+                  <body name="Link7" pos="0 -0.01 0" euler="-3.1416 0 -3.1416" gravcomp="1">
+                    <joint name="J7" type="hinge" axis="0 0 -1" range="-1.571 1.571" />
+                    <inertial pos="-3.7143E-07 -0.018577 0.00595" mass="0.1048" fullinertia="0.000105 7.3E-05 6.7E-05 0 0 0" />
+                    <geom name="Link7_mesh" type="mesh" mesh="Link7" material="arm_interface" contype="2" conaffinity="1" />
+                    <body name="hand" pos="0 0 0.04" gravcomp="1">
+                      <inertial pos="0 0 0.032" mass="0.14" diaginertia="0.00012 0.00012 0.00010" />
+                      <geom name="flange_adapter" type="cylinder" size="0.028 0.008" pos="0 0 -0.005" rgba="0.22 0.27 0.34 1" contype="2" conaffinity="1" />
+                      <geom name="fixed_holder_visual" type="mesh" mesh="xle_fixed_holder" rgba="0.18 0.22 0.28 1" contype="0" conaffinity="0" />
+                      <geom name="fixed_fin_visual" type="mesh" mesh="xle_fixed_fin" rgba="0.88 0.92 0.96 1" contype="0" conaffinity="0" />
+                      <geom name="servo_case" type="box" size="0.014 0.021 0.018" pos="0 0 0.022" rgba="0.1 0.11 0.14 1" contype="2" conaffinity="1" />
+                      <site name="tcp" pos="0 0 0.106" size="0.004" rgba="0.2 1 0.5 1" />
+                      <body name="moving_jaw" pos="0.026 0 0.03" gravcomp="1">
+                        <joint name="gripper_hinge" type="hinge" axis="0 1 0" range="-0.20 1.05" damping="0.08" armature="0.0005" />
+                        <inertial pos="0.005 0 0.05" mass="0.035" diaginertia="0.000025 0.000025 0.000005" />
+                        <geom name="moving_holder_visual" type="mesh" mesh="xle_moving_holder" rgba="0.18 0.22 0.28 1" contype="0" conaffinity="0" />
+                        <geom name="moving_fin_visual" type="mesh" mesh="xle_moving_fin" rgba="0.88 0.92 0.96 1" contype="0" conaffinity="0" />
+                        <geom name="moving_pad_0" type="box" pos="-0.004 0 0.045" size="0.002 0.011 0.007" rgba="0.8 0.85 0.9 0" group="3" contype="4" conaffinity="1" friction="1.8 0.03 0.002" solref="0.012 1" solimp="0.90 0.98 0.001" />
+                        <geom name="moving_pad_1" type="box" pos="-0.004 0 0.059" size="0.002 0.011 0.007" rgba="0.8 0.85 0.9 0" group="3" contype="4" conaffinity="1" friction="1.8 0.03 0.002" solref="0.012 1" solimp="0.90 0.98 0.001" />
+                        <geom name="moving_pad_2" type="box" pos="-0.004 0 0.073" size="0.002 0.011 0.007" rgba="0.8 0.85 0.9 0" group="3" contype="4" conaffinity="1" friction="1.8 0.03 0.002" solref="0.012 1" solimp="0.90 0.98 0.001" />
+                        <geom name="moving_pad_3" type="box" pos="-0.004 0 0.08700000000000001" size="0.002 0.011 0.007" rgba="0.8 0.85 0.9 0" group="3" contype="4" conaffinity="1" friction="1.8 0.03 0.002" solref="0.012 1" solimp="0.90 0.98 0.001" />
+                      </body>
+                      <geom name="fixed_pad_0" type="box" pos="-0.022 0 0.075" size="0.002 0.011 0.007" rgba="0.8 0.85 0.9 0" group="3" contype="4" conaffinity="1" friction="1.8 0.03 0.002" solref="0.012 1" solimp="0.90 0.98 0.001" />
+                      <geom name="fixed_pad_1" type="box" pos="-0.022 0 0.089" size="0.002 0.011 0.007" rgba="0.8 0.85 0.9 0" group="3" contype="4" conaffinity="1" friction="1.8 0.03 0.002" solref="0.012 1" solimp="0.90 0.98 0.001" />
+                      <geom name="fixed_pad_2" type="box" pos="-0.022 0 0.103" size="0.002 0.011 0.007" rgba="0.8 0.85 0.9 0" group="3" contype="4" conaffinity="1" friction="1.8 0.03 0.002" solref="0.012 1" solimp="0.90 0.98 0.001" />
+                      <geom name="fixed_pad_3" type="box" pos="-0.022 0 0.117" size="0.002 0.011 0.007" rgba="0.8 0.85 0.9 0" group="3" contype="4" conaffinity="1" friction="1.8 0.03 0.002" solref="0.012 1" solimp="0.90 0.98 0.001" />
+                    </body>
+                  </body>
+                  <inertial pos="-1.3033E-07 -0.0098039 8.3267E-17" mass="0.391" fullinertia="0.00014242 0.00014737 0.00015188 0 0 0" />
+                  <geom name="Link6_mesh" type="mesh" mesh="Link6" material="arm_silver" contype="2" conaffinity="1" />
+                </body>
+                <inertial pos="0.00042498 -0.043121 0.00020709" mass="0.59294" fullinertia="0.000506 0.000349 0.000501 2E-06 -1E-06 -1E-06" />
+                <geom name="Link5_mesh" type="mesh" mesh="Link5" material="arm_silver" contype="2" conaffinity="1" />
+              </body>
+              <inertial pos="-0.020915 -0.070455 0.060056" mass="0.85572" fullinertia="0.001009 0.000707 0.00093 -8.4E-05 6.3E-05 0.000139" />
+              <geom name="Link4_mesh" type="mesh" mesh="Link4" material="arm_silver" contype="2" conaffinity="1" />
+            </body>
+            <inertial pos="-0.0062069 0.075751 0.012556" mass="0.71845" fullinertia="0.000746 0.000558 0.000728 2.9E-05 1.3E-05 -0.000086" />
+            <geom name="Link3_mesh" type="mesh" mesh="Link3" material="arm_silver" contype="2" conaffinity="1" />
+          </body>
+          <inertial pos="0.0017013 0.063321 -0.0042531" mass="0.74773" fullinertia="0.001137 0.000672 0.001314 9.3E-05 -6E-06 3.2E-05" />
+          <geom name="Link2_mesh" type="mesh" mesh="Link2" material="arm_silver" contype="2" conaffinity="1" />
+        </body>
+        <inertial pos="2.156E-08 -9.6233E-09 0.045314" mass="0.89452" fullinertia="0.00082526 0.0006531 0.00059909 1.1484E-09 -7.1331E-10 5.9698E-10" />
+        <geom name="Link1_mesh" type="mesh" mesh="Link1" material="arm_silver" contype="2" conaffinity="1" />
+      </body>
+      <inertial pos="-0.00010643 0.0010041 0.023203" mass="1.7759" fullinertia="0.0014112 0.001783 0.0025584 1.7968E-06 1.2255E-06 -8.2296E-06" />
+      <geom name="base_link_mesh" type="mesh" mesh="base_link" material="arm_silver" contype="2" conaffinity="1" />
+    </body>
+    <body name="red_cube" pos="0.12 0.25 0.621">
+      <freejoint name="cube_free" />
+      <inertial pos="0 0 0" mass="0.055" diaginertia="0.000014667 0.000014667 0.000014667" />
+      <geom name="cube" type="box" size="0.02 0.02 0.02" mass="0.055" rgba="0.9 0.045 0.035 1" friction="2.5 0.03 0.002" conaffinity="7" />
+    </body>
+    <site name="drop_zone" type="box" pos="-0.12 0.25 0.601" size="0.06 0.06 0.001" rgba="0.1 0.8 0.55 0.4" />
+    <body name="target" mocap="true" pos="0.12 0.25 0.79">
+      <site name="target_site" type="sphere" size="0.008" rgba="1 0.75 0.15 0.5" />
+    </body>
+  </worldbody>
+  <actuator>
+    <position name="J1_servo" joint="J1" kp="220" kv="24" ctrlrange="-2.723 2.723" forcerange="-60 60" />
+    <position name="J2_servo" joint="J2" kp="220" kv="24" ctrlrange="0 3.1416" forcerange="-60 60" />
+    <position name="J3_servo" joint="J3" kp="220" kv="24" ctrlrange="-0.349 3.491" forcerange="-33 33" />
+    <position name="J4_servo" joint="J4" kp="220" kv="24" ctrlrange="0 3.1415" forcerange="-33 33" />
+    <position name="J5_servo" joint="J5" kp="220" kv="24" ctrlrange="-2.269 2.269" forcerange="-33 33" />
+    <position name="J6_servo" joint="J6" kp="220" kv="24" ctrlrange="-0.524 0.524" forcerange="-10 10" />
+    <position name="J7_servo" joint="J7" kp="220" kv="24" ctrlrange="-1.571 1.571" forcerange="-10 10" />
+    <position name="gripper_servo" joint="gripper_hinge" kp="8" kv="0.3" ctrlrange="-0.20 1.05" forcerange="-0.8 0.8" />
+  </actuator>
+</mujoco>
