@@ -8,7 +8,7 @@
     <headlight ambient="0.4 0.4 0.4" diffuse="0.7 0.7 0.7" />
   </visual>
   <default>
-    <joint damping="1.5" armature="0.015" />
+    <joint damping="0.1" armature="0.015" />
     <geom friction="1.2 0.01 0.001" solref="0.006 1" solimp="0.95 0.99 0.001" condim="4" />
   </default>
   <asset>
@@ -38,31 +38,31 @@
     <geom type="box" pos="0.42 -0.22 0.265" size="0.025 0.025 0.265" rgba="0.15 0.19 0.24 1" conaffinity="7" />
     <geom type="box" pos="0.42 0.52 0.265" size="0.025 0.025 0.265" rgba="0.15 0.19 0.24 1" conaffinity="7" />
     <geom name="base_pedestal" type="cylinder" pos="0 0 0.625" size="0.083 0.025" rgba="0.12 0.17 0.23 1" conaffinity="7" />
-    <body name="base_link" pos="0 0 0.676" gravcomp="1">
-      <body name="Link1" pos="0 0 0.069" euler="0 0 0" gravcomp="1">
+    <body name="base_link" pos="0 0 0.676">
+      <body name="Link1" pos="0 0 0.069" euler="0 0 0">
         <joint name="J1" type="hinge" axis="0 0 -1" range="-2.723 2.723" />
-        <body name="Link2" pos="0 0 0.0469" euler="0 0 0" gravcomp="1">
+        <body name="Link2" pos="0 0 0.0469" euler="0 0 0">
           <joint name="J2" type="hinge" axis="1 0 0" range="0 3.1416" />
-          <body name="Link3" pos="0 0.1085 -0.0047926" euler="0 0 0" gravcomp="1">
+          <body name="Link3" pos="0 0.1085 -0.0047926" euler="0 0 0">
             <joint name="J3" type="hinge" axis="0 1 0" range="-0.349 3.491" />
-            <body name="Link4" pos="0.025 0.082408 0.016191" euler="0 0 0" gravcomp="1">
+            <body name="Link4" pos="0.025 0.082408 0.016191" euler="0 0 0">
               <joint name="J4" type="hinge" axis="-1 0 0" range="0 3.1415" />
-              <body name="Link5" pos="-0.022314 -0.10786 0.062877" euler="-0.017453 0 0" gravcomp="1">
+              <body name="Link5" pos="-0.022314 -0.10786 0.062877" euler="-0.017453 0 0">
                 <joint name="J5" type="hinge" axis="0 1 0" range="-2.269 2.269" />
-                <body name="Link6" pos="-1.1462E-05 -0.1072 0.00069991" euler="0 -0.016375 0" gravcomp="1">
+                <body name="Link6" pos="-1.1462E-05 -0.1072 0.00069991" euler="0 -0.016375 0">
                   <joint name="J6" type="hinge" axis="-1 0 0" range="-0.524 0.524" />
-                  <body name="Link7" pos="0 -0.01 0" euler="-3.1416 0 -3.1416" gravcomp="1">
+                  <body name="Link7" pos="0 -0.01 0" euler="-3.1416 0 -3.1416">
                     <joint name="J7" type="hinge" axis="0 0 -1" range="-1.571 1.571" />
                     <inertial pos="-3.7143E-07 -0.018577 0.00595" mass="0.1048" fullinertia="0.000105 7.3E-05 6.7E-05 0 0 0" />
                     <geom name="Link7_mesh" type="mesh" mesh="Link7" material="arm_interface" contype="2" conaffinity="1" />
-                    <body name="hand" pos="0 0 0.04" gravcomp="1">
+                    <body name="hand" pos="0 0 0.04">
                       <inertial pos="0 0 0.032" mass="0.14" diaginertia="0.00012 0.00012 0.00010" />
                       <geom name="flange_adapter" type="cylinder" size="0.028 0.008" pos="0 0 -0.005" rgba="0.22 0.27 0.34 1" contype="2" conaffinity="1" />
                       <geom name="fixed_holder_visual" type="mesh" mesh="xle_fixed_holder" rgba="0.18 0.22 0.28 1" contype="0" conaffinity="0" />
                       <geom name="fixed_fin_visual" type="mesh" mesh="xle_fixed_fin" rgba="0.88 0.92 0.96 1" contype="0" conaffinity="0" />
                       <geom name="servo_case" type="box" size="0.014 0.021 0.018" pos="0 0 0.022" rgba="0.1 0.11 0.14 1" contype="2" conaffinity="1" />
                       <site name="tcp" pos="0 0 0.106" size="0.004" rgba="0.2 1 0.5 1" />
-                      <body name="moving_jaw" pos="0.026 0 0.03" gravcomp="1">
+                      <body name="moving_jaw" pos="0.026 0 0.03">
                         <joint name="gripper_hinge" type="hinge" axis="0 1 0" range="-0.20 1.05" damping="0.08" armature="0.0005" />
                         <inertial pos="0.005 0 0.05" mass="0.035" diaginertia="0.000025 0.000025 0.000005" />
                         <geom name="moving_holder_visual" type="mesh" mesh="xle_moving_holder" rgba="0.18 0.22 0.28 1" contype="0" conaffinity="0" />
@@ -110,13 +110,13 @@
     </body>
   </worldbody>
   <actuator>
-    <position name="J1_servo" joint="J1" kp="220" kv="24" ctrlrange="-2.723 2.723" forcerange="-60 60" />
-    <position name="J2_servo" joint="J2" kp="220" kv="24" ctrlrange="0 3.1416" forcerange="-60 60" />
-    <position name="J3_servo" joint="J3" kp="220" kv="24" ctrlrange="-0.349 3.491" forcerange="-33 33" />
-    <position name="J4_servo" joint="J4" kp="220" kv="24" ctrlrange="0 3.1415" forcerange="-33 33" />
-    <position name="J5_servo" joint="J5" kp="220" kv="24" ctrlrange="-2.269 2.269" forcerange="-33 33" />
-    <position name="J6_servo" joint="J6" kp="220" kv="24" ctrlrange="-0.524 0.524" forcerange="-10 10" />
-    <position name="J7_servo" joint="J7" kp="220" kv="24" ctrlrange="-1.571 1.571" forcerange="-10 10" />
+    <motor name="J1_motor" joint="J1" gear="1" ctrllimited="true" forcelimited="true" ctrlrange="-60 60" forcerange="-60 60" />
+    <motor name="J2_motor" joint="J2" gear="1" ctrllimited="true" forcelimited="true" ctrlrange="-60 60" forcerange="-60 60" />
+    <motor name="J3_motor" joint="J3" gear="1" ctrllimited="true" forcelimited="true" ctrlrange="-33 33" forcerange="-33 33" />
+    <motor name="J4_motor" joint="J4" gear="1" ctrllimited="true" forcelimited="true" ctrlrange="-33 33" forcerange="-33 33" />
+    <motor name="J5_motor" joint="J5" gear="1" ctrllimited="true" forcelimited="true" ctrlrange="-33 33" forcerange="-33 33" />
+    <motor name="J6_motor" joint="J6" gear="1" ctrllimited="true" forcelimited="true" ctrlrange="-10 10" forcerange="-10 10" />
+    <motor name="J7_motor" joint="J7" gear="1" ctrllimited="true" forcelimited="true" ctrlrange="-10 10" forcerange="-10 10" />
     <position name="gripper_servo" joint="gripper_hinge" kp="8" kv="0.3" ctrlrange="-0.20 1.05" forcerange="-0.8 0.8" />
   </actuator>
 </mujoco>

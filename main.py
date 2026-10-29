@@ -10,6 +10,7 @@ import mujoco
 import numpy as np
 
 from environment import ArmEnvironment
+from recording import JointRecorder
 
 HELP = """
 R1-7A + XLeRobot SO101 TPU95A MuJoCo 键盘抓取环境
@@ -19,8 +20,8 @@ R1-7A + XLeRobot SO101 TPU95A MuJoCo 键盘抓取环境
   Space: 夹爪开/合       R: 重置场景          P: 暂停/继续
   H: 显示帮助            Esc: 退出
   鼠标左键拖动: 旋转视角   右键拖动: 平移视角   滚轮: 缩放
-抓取: 移到红色方块正上方 -> E 下降到方块中心 -> Space 合拢 -> Q 抬起。
-默认位置已对准方块；绿色区域可用于放置。所有距离单位为米。
+抓取: 转正夹爪并移到花盆上方 -> E 下降到盆壁 -> Space 合拢 -> Q 抬起。
+默认是腕部相机观察姿态；绿色区域可用于放置。所有距离单位为米。
 """
 
 
@@ -29,6 +30,9 @@ class KeyboardViewer:
         self.env = env
         if not glfw.init():
             raise RuntimeError('GLFW 初始化失败，请在桌面会话运行，或使用 --headless --demo')
+        # MuJoCo's offscreen GLFW camera leaves a persistent VISIBLE=False hint.
+        # The interactive window must be visible even when a camera was created first.
+        glfw.window_hint(glfw.VISIBLE, glfw.TRUE)
         self.window = glfw.create_window(1280, 900, 'R1-7A + SO101 TPU95A | Keyboard Cartesian Control', None, None)
         if not self.window:
             glfw.terminate()
@@ -106,12 +110,15 @@ class KeyboardViewer:
         mujoco.mjr_render(viewport, self.scene, self.context)
         pos, cube = self.env.tcp_position, self.env.cube_position
         grip = 'OPEN' if self.env.gripper_open else 'CLOSED'
-        status = 'PAUSED' if self.env.paused else ('CUBE LIFTED!' if self.env.success else 'RUNNING')
-        labels = 'R1-7A + SO101 TPU95A\nState\nTCP xyz (m)\nTarget xyz (m)\nCube xyz (m)\nGripper\nIK residual'
+        status = 'PAUSED' if self.env.paused else ('OBJECT LIFTED!' if self.env.success else 'RUNNING')
+        labels = 'R1-7A + SO101 TPU95A\nState\nTCP xyz (m)\nTarget xyz (m)\nObject xyz (m)\nGripper\nIK residual\nJoint error max (rad)\nFeedforward tau (Nm)\nMotor torque (Nm)'
         angle = np.degrees(self.env.data.qpos[self.env.gripper_q])
         values = f'\n{status}\n{pos[0]:+.3f} {pos[1]:+.3f} {pos[2]:.3f}\n' + ' '.join(f'{v:+.3f}' for v in self.env.target_position) + f'\n{cube[0]:+.3f} {cube[1]:+.3f} {cube[2]:.3f}\n{grip} {angle:.1f} deg | contacts {len(self.env.contact_sides())}/2\n{self.env.ik_error:.4f}'
+        values += f'\n{np.max(np.abs(self.env.motors.q - self.env.data.qpos[self.env.qids])):.4f}'
+        values += '\n' + ' '.join(f'{v:+.1f}' for v in self.env.motors.tau)
+        values += '\n' + ' '.join(f'{v:+.1f}' for v in self.env.motors.applied_tau)
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport, labels, values, self.context)
-        help_text = 'MOVE  W/S: Y +/-   A/D: X -/+   Q/E: Z +/-   SHIFT: fine\nROTATE  I/K: X   J/L: Y   U/O: Z\nSPACE: gripper   R: reset   P: pause   ESC: exit\nMouse: left orbit | right pan | wheel zoom\nPinch red cube, lift, then release over green zone.'
+        help_text = 'MOVE  W/S: Y +/-   A/D: X -/+   Q/E: Z +/-   SHIFT: fine\nROTATE  I/K: X   J/L: Y   U/O: Z\nSPACE: gripper   R: reset   P: pause   ESC: exit\nMouse: left orbit | right pan | wheel zoom\nPinch the pot wall, lift, then release over green zone.'
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_BOTTOMLEFT, viewport, help_text, '', self.context)
         glfw.swap_buffers(self.window)
 
@@ -124,7 +131,7 @@ class KeyboardViewer:
                 now = time.monotonic()
                 if seconds is not None and now - start > seconds:
                     break
-                # Fixed 100 Hz controller and 500 Hz physics, independent of rendering.
+                # Fixed 100 Hz IK targets; 500 Hz inner motor PD and physics.
                 accumulator += min(now - previous, 0.1)
                 previous = now
                 glfw.poll_events()
@@ -158,11 +165,29 @@ def main():
     parser.add_argument('--demo', action='store_true', help='运行物理抓取、搬运、放置验证')
     parser.add_argument('--snapshot', type=Path, help='保存场景 PNG（需要 Pillow）')
     parser.add_argument('--seconds', type=float, default=None, help='窗口自动关闭时间，便于冒烟测试')
+    parser.add_argument('--motor-config', type=Path, help='七关节 kp/kd、力矩限制及被动参数 JSON')
+    parser.add_argument('--object', choices=['plant', 'cube'], default='plant', help='共用场景的抓取物，默认盆栽')
+    parser.add_argument('--wrist-camera', action=argparse.BooleanOptionalAction, default=True,
+                        help='加入 yolo_grasp 中的 D435 腕部相机与支架负载，默认开启')
+    parser.add_argument('--end-effector-config', type=Path, help='末端质量、质心及可选惯量 JSON')
+    parser.add_argument('--record', type=Path, help='记录命令与状态 CSV，路径必须是新文件')
     args = parser.parse_args()
-    env = ArmEnvironment()
+    env = ArmEnvironment(motor_config=args.motor_config, object_kind=args.object,
+                         end_effector_config=args.end_effector_config, include_camera=args.wrist_camera)
+    print('Joint torque control: gravity feedforward scale=', env.motors.gravity_feedforward_scale,
+          'kp=', env.motors.default_kp, 'kd=', env.motors.default_kd,
+          'limits (Nm)=', env.motors.tau_limit,
+          'command Hz=', 1 / env.motors.command_period,
+          'SDK quantization=', env.motors.protocol is not None,
+          'wrist camera=', args.wrist_camera, flush=True)
+    with JointRecorder(env, args.record):
+        run_session(env, args)
+
+
+def run_session(env, args):
     if args.demo:
         def observe(phase):
-            print(f'{phase:10s} TCP={env.tcp_position.round(4)} cube={env.cube_position.round(4)} contacts={len(env.contact_sides())}', flush=True)
+            print(f'{phase:10s} TCP={env.tcp_position.round(4)} object={env.object_position.round(4)} contacts={len(env.contact_sides())}', flush=True)
             if args.snapshot and phase == 'lift':
                 args.snapshot.parent.mkdir(parents=True, exist_ok=True)
                 snapshot(env, args.snapshot)

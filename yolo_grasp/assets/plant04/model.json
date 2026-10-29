@@ -1,0 +1,24 @@
+{
+  "model": "potted_plant_04",
+  "pot_diameter_m": 0.06,
+  "pot_height_m": 0.05542122675375947,
+  "scale": 0.35738467845019384,
+  "source_pot_bounds_m": [
+    [
+      -0.08394315838813782,
+      -0.08394315838813782,
+      0.0003753884811885655
+    ],
+    [
+      0.08394316583871841,
+      0.08394315838813782,
+      0.15544982254505157
+    ]
+  ],
+  "parts": [
+    "potted_plant_04_dirt",
+    "potted_plant_04_ground",
+    "potted_plant_04_plant",
+    "potted_plant_04_pot"
+  ]
+}

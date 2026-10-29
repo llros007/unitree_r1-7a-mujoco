@@ -3,3 +3,16 @@ __pycache__/
 .venv/
 .env
 .DS_Store
+yolo_grasp/models/
+yolo_grasp/outputs/
+*.ts
+yolo_grasp/assets/scene_d435.xml
+assets/scene_wrist.xml
+assets/scene_shared_*.xml
+
+# Local downloads, replaced models and generated traces are not release inputs.
+/outputs/
+yolo_grasp/assets/plant/
+yolo_grasp/assets/plant04/*.blend
+yolo_grasp/assets/plant04/textures/*.jpg
+yolo_grasp/GRASP_COMPARISON.zh-CN.md

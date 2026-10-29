@@ -1,0 +1,12 @@
+{
+  "kp": [60, 60, 60, 60, 60, 60, 60],
+  "kd": [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5],
+  "tau_limit": [60, 60, 33, 33, 33, 10, 10],
+  "damping": [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1],
+  "frictionloss": [0, 0, 0, 0, 0, 0, 0],
+  "armature": [0.015, 0.015, 0.015, 0.015, 0.015, 0.015, 0.015],
+  "torque_time_constant_s": 0.0,
+  "cartesian_reference_time_constant_s": 0.0,
+  "command_period_s": 0.02,
+  "sdk_protocol_calibration": "assets/joint_calib.txt"
+}

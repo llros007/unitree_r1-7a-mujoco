@@ -23,7 +23,7 @@ def build_scene():
     ET.SubElement(visual, 'global', offwidth='1280', offheight='900')
     ET.SubElement(visual, 'headlight', ambient='0.4 0.4 0.4', diffuse='0.7 0.7 0.7')
     defaults = ET.SubElement(root, 'default')
-    ET.SubElement(defaults, 'joint', damping='1.5', armature='0.015')
+    ET.SubElement(defaults, 'joint', damping='0.1', armature='0.015')
     ET.SubElement(defaults, 'geom', friction='1.2 0.01 0.001', solref='0.006 1', solimp='0.95 0.99 0.001', condim='4')
     assets = ET.SubElement(root, 'asset')
     ET.SubElement(assets, 'texture', name='grid', type='2d', builtin='checker', rgb1='0.12 0.16 0.22', rgb2='0.18 0.23 0.30', width='512', height='512')
@@ -41,11 +41,11 @@ def build_scene():
             ET.SubElement(world, 'geom', type='box', pos=f'{x} {y} 0.265', size='0.025 0.025 0.265', rgba='0.15 0.19 0.24 1', conaffinity='7')
     ET.SubElement(world, 'geom', name='base_pedestal', type='cylinder', pos='0 0 0.625', size='0.083 0.025', rgba='0.12 0.17 0.23 1', conaffinity='7')
     links = {link.get('name'): link for link in robot.findall('link')}
-    bodies = {'base_link': ET.SubElement(world, 'body', name='base_link', pos='0 0 0.676', gravcomp='1')}
+    bodies = {'base_link': ET.SubElement(world, 'body', name='base_link', pos='0 0 0.676')}
     for j in robot.findall('joint'):
         child = j.find('child').get('link')
         origin, limit = j.find('origin'), j.find('limit')
-        body = ET.SubElement(bodies[j.find('parent').get('link')], 'body', name=child, pos=origin.get('xyz'), euler=origin.get('rpy'), gravcomp='1')
+        body = ET.SubElement(bodies[j.find('parent').get('link')], 'body', name=child, pos=origin.get('xyz'), euler=origin.get('rpy'))
         ET.SubElement(body, 'joint', name=j.get('name'), type='hinge', axis=j.find('axis').get('xyz'), range=f"{limit.get('lower')} {limit.get('upper')}")
         bodies[child] = body
     for name, body in bodies.items():
@@ -69,7 +69,7 @@ def build_scene():
     for j in robot.findall('joint'):
         limit = j.find('limit')
         effort = limit.get('effort')
-        ET.SubElement(actuators, 'position', name=f"{j.get('name')}_servo", joint=j.get('name'), kp='220', kv='24', ctrlrange=f"{limit.get('lower')} {limit.get('upper')}", forcerange=f'-{effort} {effort}')
+        ET.SubElement(actuators, 'motor', name=f"{j.get('name')}_motor", joint=j.get('name'), gear='1', ctrllimited='true', forcelimited='true', ctrlrange=f'-{effort} {effort}', forcerange=f'-{effort} {effort}')
     from xle_gripper import add_gripper
     add_gripper(bodies['Link7'], assets, actuators)
     ET.indent(root, space='  ')

@@ -1,0 +1,3 @@
+-r ../requirements.txt
+ultralytics==8.4.192
+opencv-python>=4.8,<5
