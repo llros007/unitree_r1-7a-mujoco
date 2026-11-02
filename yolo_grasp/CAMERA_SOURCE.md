@@ -34,3 +34,5 @@ MuJoCo uses camera +X right, +Y up and -Z forward. Backprojection uses OpenCV +X
 640x480 color and depth are rendered with the same ideal pinhole projection. A vertical FOV of 42.5 degrees approximates a 4:3 center crop of the D435 RGB view. Depth outside [0.175, 3.0] optical meters is zeroed. The camera and bracket add an approximate 90 g fixed payload. The body has a collision envelope, but the simplified mount and lens decorations are visual geometry.
 
 This is a simulated D435-style, registered RGB-D stream. It is not a factory-calibrated D435 model: real RGB/depth camera intrinsics, their relative transform, distortion, baseline occlusions, stereo matching, exposure, projector patterns and noise are not reproduced. Real use requires intrinsics from the actual streams, depth-to-color alignment and hand-eye calibration of the installed camera. No physical camera or robot is opened by this module.
+
+The complete wrist rig follows the corrected radial flange hand transform in `xle_gripper.configure_mount`; the camera-to-hand offset and intrinsics remain unchanged. This mounting correction changes the camera-to-Link7 transform and its world pose.

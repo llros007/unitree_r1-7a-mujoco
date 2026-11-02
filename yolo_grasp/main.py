@@ -48,7 +48,9 @@ class Application:
             raise ValueError('--speed must be in [0.1, 1.0]')
         motor_config = getattr(args, 'motor_config', None)
         self.env = ArmEnvironment(motor_config=motor_config, object_kind=object_kind,
-                                  end_effector_config=getattr(args, 'end_effector_config', None))
+                                  end_effector_config=getattr(args, 'end_effector_config', None),
+                                  initial_pose=getattr(args, 'initial_pose', 'observation'),
+                                  calibration_path=getattr(args, 'calibration', None))
         self.controller = SearchPickPlace(self.env, self.probe, lambda: self.perceive(_scan=True), speed=speed)
         self.rng = np.random.default_rng(getattr(args, 'seed', None))
         if getattr(args, 'randomize', False):
@@ -56,7 +58,11 @@ class Application:
         self.output = args.output.expanduser().resolve()
         self.output.mkdir(parents=True, exist_ok=True)
         self.detector = Detector(args.weights, args.classes, args.device, args.conf)
-        self.camera = RGBDCamera(self.env)
+        if getattr(args, 'camera_backend', 'realsense-sdk') == 'realsense-sdk':
+            from yolo_grasp.realsense_camera import RealSenseSDKCamera
+            self.camera = RealSenseSDKCamera(self.env)
+        else:
+            self.camera = RGBDCamera(self.env)
         self.image = None
         self.grasp = None
         self.message = 'G: detect and grasp | V: detect only | R: reset | P: pause'
@@ -65,7 +71,8 @@ class Application:
         self.report_saved = False
         self.live_frame = None
         try:
-            self.park()
+            if self.env.initial_pose == 'observation':
+                self.park()
         except Exception:
             self.camera.close()
             raise
@@ -73,7 +80,7 @@ class Application:
     def park(self):
         # Fixed observation pose over the workspace. The wrist camera moves with
         # the hand; retain sufficient distance for the D435 depth profile.
-        self.env.move_to(self.env.home_position, 3., rotation=self.env.home_rotation)
+        self.env.move_to_observation()
         for _ in range(60):
             self.env.step()
         self.grasp = None
@@ -132,6 +139,8 @@ class Application:
         self.lift_saved = self.place_saved = self.report_saved = False
         for name in ('grasp.json', 'result.json', 'lift.png', 'placed.png', 'detection.png', 'rgb.png', 'rgbd.npz'):
             (self.output / name).unlink(missing_ok=True)
+        if self.env.initial_pose != 'observation':
+            self.park()
         self.controller.begin_search()
         self.message = 'Searching wrist observation poses; stop, reacquire, then grasp'
 
@@ -159,7 +168,8 @@ class Viewer(KeyboardViewer):
     def on_key(self, window, key, scancode, action, mods):
         if action == glfw.PRESS and key == glfw.KEY_H:
             print('G: detect + grasp | V: detect only | R: reset | P: pause | Esc: exit\n'
-                  'Idle: original keyboard controls; mouse: orbit / pan / zoom', flush=True)
+                  'Idle: Tab switches IK/joint angles; 1-7 select joint, Up/Down jog; '
+                  'mouse: orbit / pan / zoom', flush=True)
             return
         if action == glfw.PRESS and key in (glfw.KEY_G, glfw.KEY_V):
             if self.app.controller.active:
@@ -180,7 +190,8 @@ class Viewer(KeyboardViewer):
             if getattr(self.app.args, 'randomize', False):
                 self.app.randomize_object()
             self.keys.clear()
-            self.app.park()
+            if self.env.initial_pose == 'observation':
+                self.app.park()
             self.app.message = 'Reset | G: detect and grasp | V: detect only'
             return
         # Manual movement/gripper commands are blocked during an automatic grasp.
@@ -266,6 +277,10 @@ class Viewer(KeyboardViewer):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--initial-pose', choices=['zero', 'clearance', 'observation'], default='zero',
+                        help='Startup/reset pose; tasks unfold to the observation pose before scanning')
+    parser.add_argument('--camera-backend', choices=['mujoco', 'realsense-sdk'], default='realsense-sdk',
+                        help='RGB-D source: direct renderer or genuine RealSense SDK software device')
     parser.add_argument('--weights', default=str(ROOT / 'models' / 'yoloe-26s-seg.pt'))
     parser.add_argument('--object', choices=['plant', 'cube'], default='plant', help='Scene target (default: community potted plant)')
     parser.add_argument('--classes', nargs='+', help='YOLO prompt labels; default follows --object')
@@ -273,6 +288,8 @@ def main():
     parser.add_argument('--conf', type=float, default=.20)
     parser.add_argument('--device', default='cpu')
     parser.add_argument('--insertion', type=float, help='TCP distance below visible top surface, meters (plant: 0.020, cube: 0.014)')
+    parser.add_argument('--calibration', '--calib', type=Path,
+                        help='Joint calibration file override, relative to the current working directory')
     parser.add_argument('--motor-config', type=Path, help='Optional PD motor configuration for environments with torque control')
     parser.add_argument('--end-effector-config', type=Path, help='Shared end-effector mass/COM configuration')
     parser.add_argument('--record', type=Path, help='Shared command/state CSV recorder (new file)')

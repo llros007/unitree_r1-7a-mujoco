@@ -17,23 +17,34 @@ R1-7A + XLeRobot SO101 TPU95A MuJoCo 键盘抓取环境
   W/S: 世界坐标 Y +/-     A/D: 世界坐标 X -/+
   Q/E: 世界坐标 Z +/-     Shift: 慢速微调
   I/K: 绕 X 轴旋转       J/L: 绕 Y 轴旋转       U/O: 绕 Z 轴旋转
+  Tab: 切换 IK末端控制 / 关节角控制（先保持当前姿态）
+  --control-mode joint: 关节角控制；1~7 选择关节，↑/+ 增大，↓/- 减小
+  关节模式默认 20度/秒；Shift 为四分之一速度；松键保持
   Space: 夹爪开/合       R: 重置场景          P: 暂停/继续
   H: 显示帮助            Esc: 退出
   鼠标左键拖动: 旋转视角   右键拖动: 平移视角   滚轮: 缩放
 抓取: 转正夹爪并移到花盆上方 -> E 下降到盆壁 -> Space 合拢 -> Q 抬起。
-默认是腕部相机观察姿态；绿色区域可用于放置。所有距离单位为米。
+默认从七关节全零姿态启动；绿色区域可用于放置。距离单位为米，界面角度为度。
 """
 
 
 class KeyboardViewer:
-    def __init__(self, env):
+    def __init__(self, env, control_mode='cartesian', joint_speed=20.):
         self.env = env
+        if control_mode not in ('cartesian', 'joint'):
+            raise ValueError('Unknown keyboard control mode')
+        if not np.isfinite(joint_speed) or joint_speed <= 0:
+            raise ValueError('Joint speed must be positive and finite (deg/s)')
+        self.control_mode = control_mode
+        self.joint_speed = np.deg2rad(joint_speed)
+        self.selected_joint = 0
+        self.joint_status = 'Joint jog'
         if not glfw.init():
             raise RuntimeError('GLFW 初始化失败，请在桌面会话运行，或使用 --headless --demo')
         # MuJoCo's offscreen GLFW camera leaves a persistent VISIBLE=False hint.
         # The interactive window must be visible even when a camera was created first.
         glfw.window_hint(glfw.VISIBLE, glfw.TRUE)
-        self.window = glfw.create_window(1280, 900, 'R1-7A + SO101 TPU95A | Keyboard Cartesian Control', None, None)
+        self.window = glfw.create_window(1280, 900, f'R1-7A + SO101 TPU95A | {control_mode} control', None, None)
         if not self.window:
             glfw.terminate()
             raise RuntimeError('无法创建 OpenGL 窗口，请检查 DISPLAY 和显卡驱动')
@@ -61,6 +72,16 @@ class KeyboardViewer:
         self.keys.add(key)
         if action != glfw.PRESS:
             return
+        if key == glfw.KEY_TAB:
+            self.toggle_control_mode()
+            return
+        if getattr(self, 'control_mode', 'cartesian') == 'joint':
+            if glfw.KEY_1 <= key <= glfw.KEY_7:
+                self.selected_joint = key - glfw.KEY_1
+                # Do not carry an arrow held for the previous joint into this one.
+                self.keys.difference_update(self.joint_jog_keys())
+                self.print_joint_status()
+                return
         if key == glfw.KEY_ESCAPE:
             glfw.set_window_should_close(window, True)
         elif key == glfw.KEY_SPACE:
@@ -68,10 +89,37 @@ class KeyboardViewer:
         elif key == glfw.KEY_R:
             self.env.reset()
             self.keys.clear()
+            self.joint_status = 'Reset'
         elif key == glfw.KEY_P:
             self.env.paused = not self.env.paused
         elif key == glfw.KEY_H:
             print(HELP, flush=True)
+
+    @staticmethod
+    def joint_jog_keys():
+        return {glfw.KEY_UP, glfw.KEY_DOWN, glfw.KEY_EQUAL, glfw.KEY_MINUS,
+                glfw.KEY_KP_ADD, glfw.KEY_KP_SUBTRACT}
+
+    def toggle_control_mode(self):
+        # Rebase BOTH modes on measured joints and TCP. Never execute a stale
+        # endpoint or a pending joint target when changing keyboard semantics.
+        self.keys.clear()
+        self.env.use_cartesian_control()
+        self.env.ik_error = 0.
+        self.control_mode = 'joint' if getattr(self, 'control_mode', 'cartesian') == 'cartesian' else 'cartesian'
+        self.joint_status = 'Switched: hold current pose'
+        mode = 'JOINT ANGLES' if self.control_mode == 'joint' else 'IK (Cartesian)'
+        if getattr(self, 'window', None) is not None:
+            glfw.set_window_title(self.window, f'R1-7A + SO101 TPU95A | {mode}')
+        print(f'Control mode: {mode} | current measured pose held', flush=True)
+
+    def print_joint_status(self):
+        j = self.selected_joint
+        measured = np.degrees(self.env.data.qpos[self.env.qids[j]])
+        target = np.degrees(self.env.q_command[j])
+        lo, hi = np.degrees(self.env.limits[j])
+        print(f'J{j + 1}: measured={measured:+.2f} deg, target={target:+.2f} deg, '
+              f'limits=[{lo:+.2f}, {hi:+.2f}] deg', flush=True)
 
     def on_mouse(self, window, x, y):
         dx, dy = x - self.mouse_pos[0], y - self.mouse_pos[1]
@@ -95,6 +143,14 @@ class KeyboardViewer:
             return
         key = lambda k: float(k in self.keys)
         slow = glfw.KEY_LEFT_SHIFT in self.keys or glfw.KEY_RIGHT_SHIFT in self.keys
+        if getattr(self, 'control_mode', 'cartesian') == 'joint':
+            positive = any(k in self.keys for k in (glfw.KEY_UP, glfw.KEY_EQUAL, glfw.KEY_KP_ADD))
+            negative = any(k in self.keys for k in (glfw.KEY_DOWN, glfw.KEY_MINUS, glfw.KEY_KP_SUBTRACT))
+            direction = int(positive) - int(negative)
+            if direction:
+                self.joint_status = self.env.move_joint_target(
+                    self.selected_joint, direction * self.joint_speed * (.25 if slow else 1.) * dt)
+            return
         speed = 0.025 if slow else 0.10
         translation = np.array([key(glfw.KEY_D) - key(glfw.KEY_A), key(glfw.KEY_W) - key(glfw.KEY_S), key(glfw.KEY_Q) - key(glfw.KEY_E)])
         rotation = np.array([key(glfw.KEY_I) - key(glfw.KEY_K), key(glfw.KEY_J) - key(glfw.KEY_L), key(glfw.KEY_U) - key(glfw.KEY_O)])
@@ -117,8 +173,24 @@ class KeyboardViewer:
         values += f'\n{np.max(np.abs(self.env.motors.q - self.env.data.qpos[self.env.qids])):.4f}'
         values += '\n' + ' '.join(f'{v:+.1f}' for v in self.env.motors.tau)
         values += '\n' + ' '.join(f'{v:+.1f}' for v in self.env.motors.applied_tau)
+        labels += '\nControl'
+        values += '\n' + ('JOINT ANGLES' if self.control_mode == 'joint' else 'IK (Cartesian)')
+        if self.control_mode == 'joint':
+            labels += '\nSelected joint\nJog status\nJoint: measured / target / limits (deg)'
+            values += f'\nJ{self.selected_joint + 1}\n{self.joint_status}\n'
+            for j in range(7):
+                labels += f'\n{"*" if j == self.selected_joint else " "} J{j + 1}'
+                lo, hi = np.degrees(self.env.limits[j])
+                values += (f'\n{np.degrees(self.env.data.qpos[self.env.qids[j]]):+7.2f} / '
+                           f'{np.degrees(self.env.q_command[j]):+7.2f} / [{lo:+.1f}, {hi:+.1f}]')
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport, labels, values, self.context)
-        help_text = 'MOVE  W/S: Y +/-   A/D: X -/+   Q/E: Z +/-   SHIFT: fine\nROTATE  I/K: X   J/L: Y   U/O: Z\nSPACE: gripper   R: reset   P: pause   ESC: exit\nMouse: left orbit | right pan | wheel zoom\nPinch the pot wall, lift, then release over green zone.'
+        help_text = 'IK (Cartesian) | TAB: switch to joint angles\nMOVE  W/S: Y +/-   A/D: X -/+   Q/E: Z +/-   SHIFT: fine\nROTATE  I/K: X   J/L: Y   U/O: Z\nSPACE: gripper   R: reset   P: pause   ESC: exit\nMouse: left orbit | right pan | wheel zoom'
+        if self.control_mode == 'joint':
+            help_text = ('JOINT ANGLES | TAB: switch to IK\n'
+                         '1-7: select | UP/+: increase | DOWN/-: decrease | SHIFT: fine\n'
+                         'Angles: URDF joint degrees, after calibration. Release: hold.\n'
+                         'SPACE: gripper | R: reset | P: pause | ESC: exit\n'
+                         'Mouse: left orbit | right pan | wheel zoom')
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_BOTTOMLEFT, viewport, help_text, '', self.context)
         glfw.swap_buffers(self.window)
 
@@ -162,9 +234,16 @@ def snapshot(env, path):
 def main():
     parser = argparse.ArgumentParser(description=HELP, formatter_class=argparse.RawTextHelpFormatter)
     parser.add_argument('--headless', action='store_true', help='不打开窗口')
+    parser.add_argument('--control-mode', choices=['cartesian', 'joint'], default='cartesian',
+                        help='键盘控制模式：cartesian 末端位姿，joint 单关节角度')
+    parser.add_argument('--joint-speed', type=float, default=20., help='关节角模式速度，度/秒，默认20；Shift为四分之一')
     parser.add_argument('--demo', action='store_true', help='运行物理抓取、搬运、放置验证')
     parser.add_argument('--snapshot', type=Path, help='保存场景 PNG（需要 Pillow）')
     parser.add_argument('--seconds', type=float, default=None, help='窗口自动关闭时间，便于冒烟测试')
+    parser.add_argument('--initial-pose', choices=['zero', 'clearance', 'observation'], default='zero',
+                        help='初始/复位姿态：zero 七关节全零，clearance J4=45度，observation 观察位')
+    parser.add_argument('--calibration', '--calib', type=Path,
+                        help='指定关节标定文件，覆盖电机配置；相对路径以当前工作目录为准')
     parser.add_argument('--motor-config', type=Path, help='七关节 kp/kd、力矩限制及被动参数 JSON')
     parser.add_argument('--object', choices=['plant', 'cube'], default='plant', help='共用场景的抓取物，默认盆栽')
     parser.add_argument('--wrist-camera', action=argparse.BooleanOptionalAction, default=True,
@@ -172,8 +251,10 @@ def main():
     parser.add_argument('--end-effector-config', type=Path, help='末端质量、质心及可选惯量 JSON')
     parser.add_argument('--record', type=Path, help='记录命令与状态 CSV，路径必须是新文件')
     args = parser.parse_args()
+    if not np.isfinite(args.joint_speed) or args.joint_speed <= 0:
+        parser.error('--joint-speed 必须为正的有限数值（度/秒）')
     env = ArmEnvironment(motor_config=args.motor_config, object_kind=args.object,
-                         end_effector_config=args.end_effector_config, include_camera=args.wrist_camera)
+                         end_effector_config=args.end_effector_config, include_camera=args.wrist_camera, initial_pose=args.initial_pose, calibration_path=args.calibration)
     print('Joint torque control: gravity feedforward scale=', env.motors.gravity_feedforward_scale,
           'kp=', env.motors.default_kp, 'kd=', env.motors.default_kd,
           'limits (Nm)=', env.motors.tau_limit,
@@ -203,7 +284,8 @@ def run_session(env, args):
         args.snapshot.parent.mkdir(parents=True, exist_ok=True)
         snapshot(env, args.snapshot)
     if not args.headless:
-        KeyboardViewer(env).run(args.seconds)
+        KeyboardViewer(env, control_mode=getattr(args, 'control_mode', 'cartesian'),
+                       joint_speed=getattr(args, 'joint_speed', 20.)).run(args.seconds)
 
 
 if __name__ == '__main__':

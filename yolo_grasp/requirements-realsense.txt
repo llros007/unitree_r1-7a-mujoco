@@ -1,0 +1,2 @@
+-r requirements.txt
+pyrealsense2>=2.56,<3

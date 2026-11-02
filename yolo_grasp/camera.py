@@ -13,9 +13,18 @@ class Frame:
     depth: np.ndarray
     K: np.ndarray
     world_from_camera: np.ndarray
+    timestamp_ms: float = 0.0
+    frame_number: int = 0
+    camera_points: np.ndarray | None = None
 
     def backproject(self, uv, depth):
         uv = np.asarray(uv, dtype=float)
+        if self.camera_points is not None:
+            pixels = np.rint(uv).astype(int)
+            if not np.allclose(uv, pixels):
+                raise ValueError('SDK pointcloud lookup requires integer pixel coordinates')
+            points = self.camera_points[pixels[:, 1], pixels[:, 0]]
+            return points @ self.world_from_camera[:3, :3].T + self.world_from_camera[:3, 3]
         rays = np.column_stack(((uv[:, 0] - self.K[0, 2]) / self.K[0, 0],
                                 (uv[:, 1] - self.K[1, 2]) / self.K[1, 1],
                                 np.ones(len(uv))))
@@ -61,7 +70,7 @@ class RGBDCamera:
             self.renderer.disable_depth_rendering()
         # Ideal depth aligned to RGB; simulate the profile's unavailable ranges.
         depth[(~np.isfinite(depth)) | (depth < MIN_DEPTH) | (depth > MAX_DEPTH)] = 0
-        return Frame(rgb, depth, K, transform)
+        return Frame(rgb, depth, K, transform, float(self.env.data.time) * 1000.)
 
     def close(self):
         self.renderer.close()

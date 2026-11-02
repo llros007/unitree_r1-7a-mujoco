@@ -13,7 +13,7 @@ Detect a miniature textured [Poly Haven potted plant](https://polyhaven.com/a/po
 From the repository root, with the same Python environment used for the original simulation:
 
 ```bash
-python -m pip install -r yolo_grasp/requirements.txt
+python -m pip install -r yolo_grasp/requirements-realsense.txt
 ./yolo_grasp/run.sh
 ```
 
@@ -163,3 +163,36 @@ Run `python yolo_grasp/verify.py` for contact/perception trials and
 ## Licensing
 
 This optional Ultralytics integration is distributed under [AGPL-3.0-or-later](LICENSE), including the combined YOLO application. The standalone simulator core retains BSD-3-Clause. Downloaded weights and dependencies keep their upstream licenses. See [third-party notices](../THIRD_PARTY_LICENSES.md).
+
+## RealSense SDK software camera
+
+```bash
+python -m pip install -r yolo_grasp/requirements-realsense.txt
+./yolo_grasp/run.sh --camera-backend realsense-sdk --auto
+./yolo_grasp/run.sh --camera-backend realsense-sdk --headless --detect-only
+python yolo_grasp/verify_realsense.py
+```
+
+The optional backend injects MuJoCo RGB8 and millimetre Z16 into a genuine `pyrealsense2.software_device` and reads synchronized SDK frames and intrinsics. `sdk_points()` exposes SDK XYZ and `last_sdk_frames` exposes the latest frameset. The default is `--camera-backend realsense-sdk` and requires SDK dependencies. Explicit `--camera-backend mujoco` selects direct rendering without the SDK. Both software streams share an ideal optical frame, so depth is already registered to RGB; no extra alignment is applied. The declared profile is 640×480 at 30 FPS; capture is on demand, not wall-clock paced. SDK timestamps use a logical 30 FPS transport clock (not simulation or wall time) and remain monotonic across simulation resets; initial matcher warmup resubmits the same snapshot. World extrinsics still come from the captured MuJoCo camera pose.
+
+This does not implement USB camera capture, hardware stereo matching, sensor noise or real hand-eye calibration. See the [official software-device example](https://github.com/realsenseai/librealsense/blob/master/examples/software-device/rs-software-device.cpp). The integration check verifies RGB transport, depth quantization within 0.501 mm, invalid pixels, SDK pointcloud agreement, synchronization and reset timestamps.
+
+The SDK backend binds SDK-generated XYZ to each captured frame. Grasp planning indexes this pointcloud by mask pixels and transforms those points to world coordinates. The direct MuJoCo backend retains pinhole backprojection.
+
+## Radial flange mounting and startup
+
+The gripper attaches to Link7's radial end plate, matching the supplied CAD reference, rather than along the J7 shaft. The SDK mesh plate is near local Y=-47.736 mm. The simulated hand origin is `(0,-0.061,0)` m with tool +Z=-Link7 Y, +X=-Link7 Z and +Y=Link7 X. Adapter dimensions are simulation approximations, not fabrication drawings. TCP, local inertias and camera follow the complete hand transform. J7 axes and calibration data are unchanged. The shared builder upgrades cached scene.xml mounting transforms.
+
+Keyboard/YOLO CLIs default to `--initial-pose zero`: all seven joints are zero on startup/R reset, now clear of tool/arm interference throughout the jaw sweep. `clearance` selects J4=45 degrees; `observation` selects the workspace observation target. G/`--auto` unfolds along a checked joint path before scanning, using an elbow waypoint when necessary to avoid sweeping the base. V/`--detect-only` uses the current camera pose; select `observation` to view the workspace.
+
+Tool/arm explicit contact pairs exempt only the fixed Link7 mounting interface; previous adapter/Link5–6 exceptions are removed. Startup requires 1 mm clearance; Cartesian commands and unfolding paths use sampled checks. Convex mesh hulls can conservatively reject poses. This is not full-arm continuous collision planning or physical mounting certification. `python verify_tool_clearance.py` verifies flange axes, legacy mounting interference, zero jaw sweep/hold/reset and unfolding, with/without the camera.
+
+## Select calibration at startup
+
+```bash
+PYTHON=python ./run.sh --calibration r1-7a_sdk/config/joint_calib.txt
+PYTHON=python ./run.sh --calibration ../r1-7a_sdk/config/joint_calib.txt
+PYTHON=python ./yolo_grasp/run.sh --calibration /absolute/path/joint_calib.txt --auto
+```
+
+`--calib` aliases `--calibration`. The CLI override takes precedence over the motor JSON calibration field. CLI relative paths use the current working directory and support `~`; JSON defaults retain their config-relative meaning. Startup prints the resolved calibration path. Missing/invalid files fail without fallback. No files are overwritten. Recorder metadata includes the selected file's actual path, contents and checksum.

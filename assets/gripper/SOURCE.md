@@ -13,3 +13,13 @@ Modified: extracted triangle meshes, converted mm to m, and applied rigid rotati
 Motion uses one fixed finger and one servo-driven rotary jaw. The adapter, TCP, collision proxies, masses and contact parameters are simulation approximations, not a manufacturer-provided R1 mounting design or measured TPU material model. Contact compliance does not simulate Fin Ray rib deformation.
 
 License: Apache-2.0, see LICENSE.
+
+## Radial flange attachment correction
+
+The SDK Link7 mesh has its radial mounting plate near local Y=-47.736 mm.
+The hand attaches at `(0,-0.061,0)` m with tool +Z along -Link7 Y,
+tool +X along -Link7 Z and tool +Y along Link7 X. This follows the user's
+CAD connection reference; the adapter thickness and stand-off are approximate.
+The former `(0,0,0.04)` +Z mounting incorrectly attached the tool to the
+side of the wrist. See `xle_gripper.configure_mount` for the authoritative
+transform; TCP, camera and local inertias follow the hand frame.

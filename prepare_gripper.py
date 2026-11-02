@@ -65,6 +65,7 @@ def prepare(source=DEFAULT_SOURCE):
         'TCP, collision proxies, masses and contact parameters are simulation approximations, '
         'not a manufacturer-provided R1 mounting design or measured TPU material model. '
         'Contact compliance does not simulate Fin Ray rib deformation.\n\n'
+        'Mounting uses the radial Link7 flange; see xle_gripper.configure_mount for the hand transform.\n\n'
         'License: Apache-2.0, see LICENSE.\n', encoding='utf-8')
     print(DEST)
 

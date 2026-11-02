@@ -214,3 +214,34 @@ python prepare_gripper.py --source /path/to/XLeRobot
 ## 许可与来源
 
 独立仿真核心采用 [BSD-3-Clause](LICENSE) 许可；可选 Ultralytics 集成及组合运行的 YOLO 应用按 [AGPL-3.0-or-later](yolo_grasp/LICENSE) 发布。另行下载的权重遵循上游许可，仓库不分发权重。见 [第三方许可说明](THIRD_PARTY_LICENSES.md)。宇树机械臂网格来自 Unitree SDK，保留其 [BSD-3-Clause 许可](assets/SDK_LICENSE)。XLeRobot 夹爪网格采用 [Apache-2.0](assets/gripper/LICENSE)，具体来源和变换记录见 [SOURCE.md](assets/gripper/SOURCE.md)。本项目为社区仿真项目。
+
+## 末端法兰安装与初始姿态
+
+夹爪按参考 CAD 的连接关系安装在 Link7 的径向端面，而非沿 J7 转轴方向安装。SDK 网格端面约位于 Link7 局部 Y=-47.736 mm；仿真转接盘/夹爪体原点为 `(0,-0.061,0)` m，工具轴 `+Z=-Link7 Y`、`+X=-Link7 Z`、`+Y=Link7 X`。转接盘尺寸和间距为仿真近似，不是可直接加工的实物图纸。TCP、惯量及腕部相机随整个 hand 安装变换一起更新，J7 的 URDF 关节轴和标定数据没有改变。旧缓存 scene.xml 在共用场景构建时会自动应用正确安装变换。
+
+键盘与 YOLO CLI 默认 `--initial-pose zero`：启动和 R 复位时 J1～J7 全为 0 rad；当前安装下已检查夹爪开合无末端/臂体干涉。可用 `--initial-pose clearance` 选择 J4=45° 的展开过渡姿态，或 `--initial-pose observation` 选择原观察目标。YOLO G / `--auto` 先经检查的关节路径展开，再扫描；必要时先展开 J4，以避免多个关节同时旋转时扫过底座。V / `--detect-only` 只观察当前位置；需要观察工作区可加 `--initial-pose observation`。
+
+共享场景明确启用夹爪、支架、相机与基座/臂体的接触对，仅 Link7 固定安装界面免检，已取消旧转接盘与 Link5/Link6 的例外。启动保留 1 mm 余量，笛卡尔命令及展开路径进行采样检查；网格凸包可能保守拒绝部分姿态。这不是全臂连续碰撞规划或实物安装认证。`python verify_tool_clearance.py` 检查法兰方向、旧错误安装干涉、全零位开合/保持/复位、展开，相机开启和关闭均覆盖。
+
+## 启动时选择关节标定文件
+
+```bash
+# 当前仓库内的标定
+PYTHON=python ./run.sh --calibration r1-7a_sdk/config/joint_calib.txt
+# 选择另一份，例如仓库外的 SDK 标定
+PYTHON=python ./run.sh --calibration ../r1-7a_sdk/config/joint_calib.txt
+# YOLO 仿真也支持同一参数
+PYTHON=python ./yolo_grasp/run.sh --calibration /绝对路径/joint_calib.txt --auto
+```
+
+`--calib` 是 `--calibration` 的别名。命令行参数优先于 `--motor-config` JSON 中的 `sdk_protocol_calibration`；命令行相对路径以当前工作目录为准，支持 `~`。省略参数继续使用电机配置中的默认值；启动终端打印实际加载的绝对路径。无效文件会报错，不会回退到另一份。只选择本次进程使用的文件，不覆盖文件或修改电机配置；CSV 记录元数据保存实际标定路径、内容及校验值。
+
+## 键盘关节角控制
+
+```bash
+PYTHON=python ./run.sh --control-mode joint
+# 自选标定，速度10度/秒
+PYTHON=python ./run.sh --control-mode joint --joint-speed 10 --calibration r1-7a_sdk/config/joint_calib.txt
+```
+
+无需重启，按 **Tab** 在 IK 末端控制和关节角控制之间切换；`--control-mode` 只决定启动模式。切换先以当前实测关节/TCP位置重新设定保持目标并清空按键，保留暂停状态；窗口标题和界面显示当前模式。YOLO 窗口空闲时同样支持 Tab，自动任务执行期间禁止手动切换。1～7 选择 J1～J7；按住 ↑ 或 + 增大目标角，↓ 或 - 减小（支持小键盘 +/-），松开保持。默认20度/秒，Shift降到四分之一；Space开合夹爪、R复位、P暂停、鼠标视角操作不变。界面显示各关节反馈角、目标角、限位，选中关节带星号；角度为标定后的 URDF 关节角（度），不是原始电机角。方向按 URDF 右手定则。保留关节限位、末端/臂体间隙检查及原PD/重力补偿；目标最多领先反馈5度，避免持续积累跟踪误差。默认 `--control-mode cartesian` 保留原末端控制。验证：`python verify_joint_keyboard.py`。

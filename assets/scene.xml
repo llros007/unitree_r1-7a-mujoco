@@ -55,7 +55,7 @@
                     <joint name="J7" type="hinge" axis="0 0 -1" range="-1.571 1.571" />
                     <inertial pos="-3.7143E-07 -0.018577 0.00595" mass="0.1048" fullinertia="0.000105 7.3E-05 6.7E-05 0 0 0" />
                     <geom name="Link7_mesh" type="mesh" mesh="Link7" material="arm_interface" contype="2" conaffinity="1" />
-                    <body name="hand" pos="0 0 0.04">
+                    <body name="hand" pos="0 -0.061 0" xyaxes="0 0 -1 1 0 0">
                       <inertial pos="0 0 0.032" mass="0.14" diaginertia="0.00012 0.00012 0.00010" />
                       <geom name="flange_adapter" type="cylinder" size="0.028 0.008" pos="0 0 -0.005" rgba="0.22 0.27 0.34 1" contype="2" conaffinity="1" />
                       <geom name="fixed_holder_visual" type="mesh" mesh="xle_fixed_holder" rgba="0.18 0.22 0.28 1" contype="0" conaffinity="0" />

@@ -26,6 +26,8 @@ def build_scene(config_path=None, object_kind='plant', include_camera=True):
     root.find('option').set('noslip_iterations', '5')
     root.set('model', f'R1-7A shared SO101 {object_kind} scene')
     hand = root.find(".//body[@name='hand']")
+    from xle_gripper import configure_mount
+    configure_mount(hand)
     for name, pos, size in [('plate', '0 -0.028 0.016', '0.027 0.004 0.027'),
                             ('riser', '0 -0.038 0.008', '0.027 0.008 0.004')]:
         ET.SubElement(hand, 'geom', name=f'd435_mount_{name}', type='box', pos=pos, size=size,
@@ -64,6 +66,8 @@ def build_scene(config_path=None, object_kind='plant', include_camera=True):
         hand.remove(rig)
         for name in ['d435_mount_plate', 'd435_mount_riser']:
             hand.remove(hand.find(f"geom[@name='{name}']"))
+    from end_effector_collision import add_tool_arm_contacts
+    add_tool_arm_contacts(root)
     if object_kind == 'plant':
         from yolo_grasp.plant_asset import replace_cube
         replace_cube(root, ROOT / 'assets')

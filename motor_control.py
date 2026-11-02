@@ -18,7 +18,7 @@ def joint_vector(value, name, nonnegative=False):
 
 
 class ArmMotorController:
-    def __init__(self, model, joints, actuators, config_path=None):
+    def __init__(self, model, joints, actuators, config_path=None, calibration_path=None):
         path = Path(config_path) if config_path is not None else Path(__file__).with_name('motor_config.json')
         config = json.loads(path.read_text())
         expected = {'kp', 'kd', 'tau_limit', 'damping', 'frictionloss', 'armature', 'torque_time_constant_s'}
@@ -42,7 +42,15 @@ class ArmMotorController:
             raise ValueError('command_period_s must be a whole number of physics timesteps')
         self.command_ticks = round(ticks)
         calibration = config.get('sdk_protocol_calibration')
-        self.protocol = SdkProtocol(path.resolve().parent / calibration) if calibration is not None else None
+        if calibration_path is not None:
+            # CLI overrides are relative to the caller's working directory;
+            # JSON defaults remain relative to the motor configuration file.
+            calibration = Path(calibration_path).expanduser().resolve()
+            self.config['sdk_protocol_calibration'] = str(calibration)
+        elif calibration is not None:
+            calibration = path.resolve().parent / calibration
+        self.protocol = SdkProtocol(calibration) if calibration is not None else None
+        print('SDK calibration:', self.protocol.path if self.protocol else 'disabled', flush=True)
         self.reference_time_constant = float(config.get('cartesian_reference_time_constant_s', 0.))
         if not np.isfinite(self.reference_time_constant) or self.reference_time_constant < 0:
             raise ValueError('cartesian_reference_time_constant_s must be finite and nonnegative')

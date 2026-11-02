@@ -7,13 +7,17 @@ from scipy.spatial.transform import Rotation
 from xle_gripper import OPEN_ANGLE, CLOSE_ANGLE
 from motor_control import ArmMotorController, JointReference
 from motion import DOWN_ROTATION, PickPlace, ScriptedGrasp
+from end_effector_collision import CLEARANCE_Q, ToolArmClearance
 
 ROOT = Path(__file__).resolve().parent
 
 
 class ArmEnvironment:
     def __init__(self, motor_config=None, scene_path=None, object_kind='plant',
-                 end_effector_config=None, include_camera=True):
+                 end_effector_config=None, include_camera=True, initial_pose='observation', calibration_path=None):
+        if initial_pose not in ('zero', 'clearance', 'observation'):
+            raise ValueError('initial_pose must be zero, clearance or observation')
+        self.initial_pose = initial_pose
         if scene_path is None:
             from wrist_scene import build_scene as build_shared_scene
             scene_path = build_shared_scene(end_effector_config, object_kind, include_camera)
@@ -22,6 +26,7 @@ class ArmEnvironment:
             raise FileNotFoundError(scene)
         self.model = mujoco.MjModel.from_xml_path(str(scene))
         self.scene_path = scene.resolve()
+        self.tool_clearance = ToolArmClearance(self.model)
         self.data = mujoco.MjData(self.model)
         self.ik_data = mujoco.MjData(self.model)
         self.joints = np.array([self.model.joint(f'J{i}').id for i in range(1, 8)])
@@ -29,7 +34,7 @@ class ArmEnvironment:
         self.dofs = self.model.jnt_dofadr[self.joints]
         self.arm_actuators = np.array([self.model.actuator(f'J{i}_motor').id for i in range(1, 8)])
         self.gripper_actuator = self.model.actuator('gripper_servo').id
-        self.motors = ArmMotorController(self.model, self.joints, self.arm_actuators, motor_config)
+        self.motors = ArmMotorController(self.model, self.joints, self.arm_actuators, motor_config, calibration_path=calibration_path)
         self.gripper_speed = self.motors.gripper_speed
         # Refresh inertia/contact constants after applying configurable armature.
         mujoco.mj_setConst(self.model, self.data)
@@ -68,8 +73,13 @@ class ArmEnvironment:
         # Deterministic multi-start is used only at initialization; live IK is local.
         rng = np.random.default_rng(7)
         best, best_error, best_margin = None, float('inf'), -float('inf')
-        for seed in [self.q_command] + [rng.uniform(self.limits[:, 0], self.limits[:, 1]) for _ in range(24)]:
+        # Seed the radial-flange elbow branch away from the J2 upper stop.
+        flange_seed = np.array([0., 3., 2.4, .6, -1., -.4, -1.25])
+        flange_down_seed = np.array([-1.8, 1.85, 1.03, 1.4, -1.23, -.24, -1.27])
+        for seed in [flange_seed, flange_down_seed, self.q_command] + [rng.uniform(self.limits[:, 0], self.limits[:, 1]) for _ in range(24)]:
             q, error = self.solve_ik(seed, iterations=180)
+            if self.tool_collision(q) is not None:
+                continue
             margin = float(np.min(np.minimum(q - self.limits[:, 0], self.limits[:, 1] - q)))
             if ((error < .0002 and (best_error >= .0002 or margin > best_margin))
                     or (best_error >= .0002 and error < best_error)):
@@ -112,12 +122,29 @@ class ArmEnvironment:
             q = np.clip(q + dq, self.limits[:, 0] + 0.0005, self.limits[:, 1] - 0.0005)
         return q, error_norm
 
+    def tool_collision(self, q):
+        self.ik_data.qpos[self.qids] = q
+        self.ik_data.qpos[self.gripper_q] = self.data.qpos[self.gripper_q]
+        mujoco.mj_forward(self.model, self.ik_data)
+        return self.tool_clearance.violation(self.ik_data)
+
+    def tool_motion_collision(self, start, end):
+        # Check the swept joint motion, rather than only the endpoint.
+        samples = max(2, int(np.ceil(np.max(np.abs(end - start)) / .02)) + 1)
+        for t in np.linspace(0, 1, samples):
+            collision = self.tool_collision(start + t * (end - start))
+            if collision is not None:
+                return collision
+        return None
+
     def reset(self):
         mujoco.mj_resetData(self.model, self.data)
         self.target_position = self.home_position.copy()
         self.target_rotation = self.home_rotation.copy()
-        self.q_command = self.home_q.copy()
-        self.data.qpos[self.qids] = self.home_q
+        initial_q = (np.zeros(7) if self.initial_pose == 'zero' else
+                     CLEARANCE_Q if self.initial_pose == 'clearance' else self.home_q)
+        self.q_command = initial_q.copy()
+        self.data.qpos[self.qids] = initial_q
         self.data.qpos[self.gripper_q] = OPEN_ANGLE
         self.gripper_open = True
         self.gripper_command = OPEN_ANGLE
@@ -127,11 +154,45 @@ class ArmEnvironment:
         self.cartesian_control = True
         self._command_countdown = 0
         self.episode = getattr(self, 'episode', -1) + 1
-        self.motors.reset(self.home_q)
-        self.reference.reset(self.home_q)
+        self.motors.reset(initial_q)
+        self.reference.reset(initial_q)
         self.data.ctrl[self.gripper_actuator] = OPEN_ANGLE
+        mujoco.mj_forward(self.model, self.data)
+        collision = self.tool_clearance.violation(self.data)
+        if collision is not None:
+            a, b, distance = collision
+            raise ValueError(f'Initial pose {self.initial_pose} causes tool/arm interference: '
+                             f'{a} / {b} ({distance * 1000:.2f} mm). '
+                             'Use --initial-pose clearance or observation with this gripper.')
+        if self.initial_pose != 'observation':
+            self.target_position = self.tcp_position
+            self.target_rotation = self.data.site_xmat[self.tcp_id].reshape(3, 3).copy()
         self.update_marker()
         mujoco.mj_forward(self.model, self.data)
+
+    def move_to_observation(self, duration=3.):
+        """Simulation joint-space unfolding before Cartesian task motion."""
+        start = self.data.qpos[self.qids].copy()
+        waypoints = [self.home_q]
+        if self.tool_motion_collision(start, self.home_q) is not None:
+            # The radial flange is clear at zero, but a simultaneous seven-axis
+            # sweep can pass near the base. Unfold the elbow before sweeping.
+            waypoints = [CLEARANCE_Q, self.home_q]
+        previous = start
+        for destination in waypoints:
+            collision = self.tool_motion_collision(previous, destination)
+            if collision is not None:
+                raise ValueError(f'Unfolding path blocked by tool/arm interference: {collision}')
+            previous = destination
+        for destination in waypoints:
+            start = self.data.qpos[self.qids].copy()
+            for t in np.linspace(0, 1, max(2, round(duration / len(waypoints) / .01))):
+                blend = t * t * (3 - 2 * t)
+                self.q_command = start + blend * (destination - start)
+                self.step()
+        self.target_position = self.home_position.copy()
+        self.target_rotation = self.home_rotation.copy()
+        self.update_marker()
 
     def update_marker(self):
         self.data.mocap_pos[self.mocap_id] = self.target_position
@@ -147,13 +208,45 @@ class ArmEnvironment:
             self.target_rotation = Rotation.from_rotvec(rotation).as_matrix() @ previous_rot
         q, residual = self.solve_ik(self.q_command, iterations=10)
         # Do not accumulate targets far beyond reachable Cartesian poses.
-        if residual < 0.012:
+        if residual < 0.012 and self.tool_motion_collision(self.q_command, q) is None:
             self.q_command = q
         else:
             self.target_position = previous_pos
             self.target_rotation = previous_rot
         self.ik_error = residual
         self.update_marker()
+
+    def move_joint_target(self, joint, delta, max_lead=np.deg2rad(5.)):
+        """Joint-angle jog using the existing filtered PD/gravity controller."""
+        if self.paused:
+            return 'Paused'
+        if not 0 <= joint < 7 or not np.isfinite(delta):
+            raise ValueError('Joint jog requires index 0..6 and a finite angle')
+        if not self.cartesian_control:
+            self.use_cartesian_control()
+        target = self.q_command.copy()
+        requested = target[joint] + delta
+        measured = self.data.qpos[self.qids[joint]]
+        lo = max(self.limits[joint, 0], measured - max_lead)
+        hi = min(self.limits[joint, 1], measured + max_lead)
+        if lo > hi:
+            return 'Measured joint outside limits; reset the simulation'
+        target[joint] = np.clip(requested, lo, hi)
+        if (self.tool_motion_collision(self.q_command, target) is not None
+                or self.tool_motion_collision(self.data.qpos[self.qids], target) is not None):
+            return 'Blocked: tool/arm clearance'
+        self.q_command = target
+        self.ik_data.qpos[self.qids] = target
+        mujoco.mj_forward(self.model, self.ik_data)
+        self.target_position = self.ik_data.site_xpos[self.tcp_id].copy()
+        self.target_rotation = self.ik_data.site_xmat[self.tcp_id].reshape(3, 3).copy()
+        self.ik_error = 0.
+        self.update_marker()
+        if requested < self.limits[joint, 0] or requested > self.limits[joint, 1]:
+            return 'Joint limit'
+        if abs(requested - measured) > max_lead:
+            return 'Tracking lead limited to 5 deg'
+        return 'Joint jog'
 
     def contact_sides(self):
         sides = set()
@@ -244,6 +337,8 @@ class ArmEnvironment:
     def run_demo(self, observer=None):
         """Known-fixture demo using the same contact controller as YOLO grasping."""
         self.reset()
+        if self.initial_pose != 'observation':
+            self.move_to_observation()
         surface = np.r_[self.model.qpos0[self.cube_q:self.cube_q + 2],
                         self.table_height + 2 * self.object_half_height]
         tcp = surface.copy()

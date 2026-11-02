@@ -8,12 +8,27 @@ import xml.etree.ElementTree as ET
 OPEN_ANGLE = 0.8
 CLOSE_ANGLE = -0.13
 TCP_HEIGHT = 0.106
+# SDK Link7 has a radial mounting plate at local Y = -47.736 mm.
+# Tool +Z points out of that plate (-Link7 Y), not along the J7 shaft.
+# Tool +X = -Link7 Z keeps the fixed fin above the opening jaw as in CAD.
+MOUNT_POSITION = '0 -0.061 0'
+MOUNT_XYAXES = '0 0 -1 1 0 0'
+
+
+def configure_mount(hand):
+    """Apply the flange attachment also when upgrading cached scene.xml."""
+    hand.set('pos', MOUNT_POSITION)
+    for attribute in ('quat', 'euler', 'axisangle', 'zaxis'):
+        hand.attrib.pop(attribute, None)
+    hand.set('xyaxes', MOUNT_XYAXES)
+
 
 
 def add_gripper(link7, assets, actuators):
     for name in ['fixed_holder', 'moving_holder', 'fixed_fin', 'moving_fin']:
         ET.SubElement(assets, 'mesh', name=f'xle_{name}', file=f'../gripper/{name}.stl')
-    hand = ET.SubElement(link7, 'body', name='hand', pos='0 0 0.04')
+    hand = ET.SubElement(link7, 'body', name='hand')
+    configure_mount(hand)
     ET.SubElement(hand, 'inertial', pos='0 0 0.032', mass='0.14', diaginertia='0.00012 0.00012 0.00010')
     ET.SubElement(hand, 'geom', name='flange_adapter', type='cylinder', size='0.028 0.008', pos='0 0 -0.005', rgba='0.22 0.27 0.34 1', contype='2', conaffinity='1')
     ET.SubElement(hand, 'geom', name='fixed_holder_visual', type='mesh', mesh='xle_fixed_holder', rgba='0.18 0.22 0.28 1', contype='0', conaffinity='0')

@@ -212,3 +212,30 @@ The extraction uses objects 47 (fixed holder), 39 (moving holder) and 49 (TPU fi
 The standalone simulator core is licensed under [BSD-3-Clause](LICENSE). The optional Ultralytics integration and combined YOLO application are distributed under [AGPL-3.0-or-later](yolo_grasp/LICENSE). Downloaded weights retain their upstream terms; they are not bundled. See [third-party licensing](THIRD_PARTY_LICENSES.md). Unitree arm assets retain their original [BSD-3-Clause license](assets/SDK_LICENSE). XLeRobot gripper assets retain their [Apache-2.0 license](assets/gripper/LICENSE), with source and modification details in [SOURCE.md](assets/gripper/SOURCE.md).
 
 This is a community simulation project. Thanks to [Unitree Robotics](https://github.com/unitreerobotics/r1-7a_sdk), [XLeRobot](https://github.com/Vector-Wangel/XLeRobot) and [MuJoCo](https://mujoco.readthedocs.io/).
+
+## Radial flange mounting and startup
+
+The gripper attaches to Link7's radial end plate, matching the supplied CAD reference, rather than along the J7 shaft. The SDK mesh plate is near local Y=-47.736 mm. The simulated hand origin is `(0,-0.061,0)` m with tool +Z=-Link7 Y, +X=-Link7 Z and +Y=Link7 X. Adapter dimensions are simulation approximations, not fabrication drawings. TCP, local inertias and camera follow the complete hand transform. J7 axes and calibration data are unchanged. The shared builder upgrades cached scene.xml mounting transforms.
+
+Keyboard/YOLO CLIs default to `--initial-pose zero`: all seven joints are zero on startup/R reset, now clear of tool/arm interference throughout the jaw sweep. `clearance` selects J4=45 degrees; `observation` selects the workspace observation target. G/`--auto` unfolds along a checked joint path before scanning, using an elbow waypoint when necessary to avoid sweeping the base. V/`--detect-only` uses the current camera pose; select `observation` to view the workspace.
+
+Tool/arm explicit contact pairs exempt only the fixed Link7 mounting interface; previous adapter/Link5–6 exceptions are removed. Startup requires 1 mm clearance; Cartesian commands and unfolding paths use sampled checks. Convex mesh hulls can conservatively reject poses. This is not full-arm continuous collision planning or physical mounting certification. `python verify_tool_clearance.py` verifies flange axes, legacy mounting interference, zero jaw sweep/hold/reset and unfolding, with/without the camera.
+
+## Select calibration at startup
+
+```bash
+PYTHON=python ./run.sh --calibration r1-7a_sdk/config/joint_calib.txt
+PYTHON=python ./run.sh --calibration ../r1-7a_sdk/config/joint_calib.txt
+PYTHON=python ./yolo_grasp/run.sh --calibration /absolute/path/joint_calib.txt --auto
+```
+
+`--calib` aliases `--calibration`. The CLI override takes precedence over the motor JSON calibration field. CLI relative paths use the current working directory and support `~`; JSON defaults retain their config-relative meaning. Startup prints the resolved calibration path. Missing/invalid files fail without fallback. No files are overwritten. Recorder metadata includes the selected file's actual path, contents and checksum.
+
+## Keyboard joint-angle control
+
+```bash
+PYTHON=python ./run.sh --control-mode joint
+PYTHON=python ./run.sh --control-mode joint --joint-speed 10 --calibration r1-7a_sdk/config/joint_calib.txt
+```
+
+Press **Tab** to switch between IK/Cartesian and joint-angle modes without restarting; `--control-mode` only selects the startup mode. Switching rebases targets on the measured joints/TCP, clears held keys and preserves pause state. The window title and overlay show the mode. YOLO supports the same shortcut while idle; switching is blocked during an automatic task. 1–7 selects J1–J7; hold UP/+ to increase, DOWN/- to decrease (keypad +/- supported). Release holds the target; Shift scales the default 20 deg/s rate by 0.25. Space/R/P and mouse controls remain available. The overlay shows measured/target/limit angles in calibrated URDF degrees, with a star on the selected joint. Joint limits, tool/arm swept clearance checks and the existing filtered PD/gravity controller remain active; command lead is bounded to 5 degrees. The default `--control-mode cartesian` retains endpoint controls. Check with `python verify_joint_keyboard.py`.

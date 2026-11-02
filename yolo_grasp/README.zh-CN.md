@@ -14,7 +14,7 @@
 
 ```bash
 conda activate le312
-python -m pip install -r yolo_grasp/requirements.txt
+python -m pip install -r yolo_grasp/requirements-realsense.txt
 ./yolo_grasp/run.sh
 ```
 
@@ -174,3 +174,41 @@ python yolo_grasp/verify_search.py
 ## 许可
 
 本可选 Ultralytics 集成及组合运行的 YOLO 应用按 [AGPL-3.0-or-later](LICENSE) 发布；独立仿真核心保留 BSD-3-Clause。另行下载的权重和依赖遵循各自的上游许可。见 [第三方许可说明](../THIRD_PARTY_LICENSES.md)。
+
+## 真正的 RealSense SDK 软件相机
+
+```bash
+python -m pip install -r yolo_grasp/requirements-realsense.txt
+./yolo_grasp/run.sh --camera-backend realsense-sdk --auto
+./yolo_grasp/run.sh --camera-backend realsense-sdk --headless --detect-only
+python yolo_grasp/verify_realsense.py
+```
+
+`realsense-sdk` 使用真正的 `pyrealsense2` / librealsense 软件设备，无需插入 USB 相机。MuJoCo 渲染的 RGB8 和量化为毫米的 Z16 深度，经 `software_device`、软件传感器及 `syncer` 后返回 SDK 帧；定位使用 SDK 返回的图像、米制深度和内参。`RealSenseSDKCamera.sdk_points()` 提供 SDK 点云结果，`last_sdk_frames` 保留最近的 SDK frameset。默认使用 `--camera-backend realsense-sdk`，需要安装 SDK 依赖。可显式使用 `--camera-backend mujoco` 切换到无需 SDK 的直接渲染路径。
+
+两个软件流共享同一理想光心和内参，外参为单位变换，深度已对齐 RGB，因此不重复运行 `rs.align`。640×480、RGB8/Z16、30 FPS 是软件流配置；按需采集并不保证墙钟 30 FPS。SDK 时间戳使用逻辑 30 FPS 传输时钟（不是仿真时间或墙钟），在重复采集和仿真复位后保持递增，首帧同步预热会重复提交同一快照。相机到世界变换仍来自采集时刻的 MuJoCo 相机位姿。
+
+这不是 USB 相机驱动，也不模拟双目匹配、真实畸变和噪声。真实 D435 采集与手眼标定尚未加入。SDK 软件设备参考 [官方示例](https://github.com/realsenseai/librealsense/blob/master/examples/software-device/rs-software-device.cpp)。验证覆盖 RGB 原样传输、Z16 量化误差不超过 0.501 mm、无效深度、SDK 点云与反投影一致性、帧配对和复位时钟。
+
+SDK 后端采集时生成并绑定当前帧的 SDK 点云；抓取规划器按掩膜像素直接查询该点云，再转换到世界坐标。直接 MuJoCo 后端继续使用针孔反投影。
+
+## 末端法兰安装与初始姿态
+
+夹爪按参考 CAD 的连接关系安装在 Link7 的径向端面，而非沿 J7 转轴方向安装。SDK 网格端面约位于 Link7 局部 Y=-47.736 mm；仿真转接盘/夹爪体原点为 `(0,-0.061,0)` m，工具轴 `+Z=-Link7 Y`、`+X=-Link7 Z`、`+Y=Link7 X`。转接盘尺寸和间距为仿真近似，不是可直接加工的实物图纸。TCP、惯量及腕部相机随整个 hand 安装变换一起更新，J7 的 URDF 关节轴和标定数据没有改变。旧缓存 scene.xml 在共用场景构建时会自动应用正确安装变换。
+
+键盘与 YOLO CLI 默认 `--initial-pose zero`：启动和 R 复位时 J1～J7 全为 0 rad；当前安装下已检查夹爪开合无末端/臂体干涉。可用 `--initial-pose clearance` 选择 J4=45° 的展开过渡姿态，或 `--initial-pose observation` 选择原观察目标。YOLO G / `--auto` 先经检查的关节路径展开，再扫描；必要时先展开 J4，以避免多个关节同时旋转时扫过底座。V / `--detect-only` 只观察当前位置；需要观察工作区可加 `--initial-pose observation`。
+
+共享场景明确启用夹爪、支架、相机与基座/臂体的接触对，仅 Link7 固定安装界面免检，已取消旧转接盘与 Link5/Link6 的例外。启动保留 1 mm 余量，笛卡尔命令及展开路径进行采样检查；网格凸包可能保守拒绝部分姿态。这不是全臂连续碰撞规划或实物安装认证。`python verify_tool_clearance.py` 检查法兰方向、旧错误安装干涉、全零位开合/保持/复位、展开，相机开启和关闭均覆盖。
+
+## 启动时选择关节标定文件
+
+```bash
+# 当前仓库内的标定
+PYTHON=python ./run.sh --calibration r1-7a_sdk/config/joint_calib.txt
+# 选择另一份，例如仓库外的 SDK 标定
+PYTHON=python ./run.sh --calibration ../r1-7a_sdk/config/joint_calib.txt
+# YOLO 仿真也支持同一参数
+PYTHON=python ./yolo_grasp/run.sh --calibration /绝对路径/joint_calib.txt --auto
+```
+
+`--calib` 是 `--calibration` 的别名。命令行参数优先于 `--motor-config` JSON 中的 `sdk_protocol_calibration`；命令行相对路径以当前工作目录为准，支持 `~`。省略参数继续使用电机配置中的默认值；启动终端打印实际加载的绝对路径。无效文件会报错，不会回退到另一份。只选择本次进程使用的文件，不覆盖文件或修改电机配置；CSV 记录元数据保存实际标定路径、内容及校验值。
