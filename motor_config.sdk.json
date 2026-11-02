@@ -8,5 +8,5 @@
   "torque_time_constant_s": 0.0,
   "cartesian_reference_time_constant_s": 0.0,
   "command_period_s": 0.02,
-  "sdk_protocol_calibration": "assets/joint_calib.txt"
+  "sdk_protocol_calibration": "r1-7a_sdk/config/joint_calib.txt"
 }

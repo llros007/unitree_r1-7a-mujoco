@@ -124,7 +124,7 @@ def verify():
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--sdk-root', type=Path, default=ROOT.parent / 'r1-7a_sdk')
+    parser.add_argument('--sdk-root', type=Path, default=ROOT / 'r1-7a_sdk' if (ROOT / 'r1-7a_sdk').is_dir() else ROOT.parent / 'r1-7a_sdk')
     parser.add_argument('--output', type=Path)
     args = parser.parse_args()
     report = {'sdk_protocol': verify_sdk(args.sdk_root), **verify()}

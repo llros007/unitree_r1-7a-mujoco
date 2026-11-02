@@ -1,0 +1,9 @@
+Version: 0.1.0
+Author: CBX
+Date: 2026-09-17 11:52 +0800
+
+Changes:
+- 初始 VERSION 记录
+- ArmMotorBus 多关节串口总线（URDF 标定、step/states）
+- test_arm_lowlevel：--foc / --stop / --zero-torque / --clear / --reset / --home / --goto
+- calibrate_joints 关节标定工具

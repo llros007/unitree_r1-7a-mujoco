@@ -7,8 +7,15 @@ ROOT = Path(__file__).resolve().parent
 SCENE = ROOT / 'assets' / 'scene.xml'
 
 
+def sdk_root():
+    for root in (ROOT / 'r1-7a_sdk', ROOT.parent / 'r1-7a_sdk'):
+        if (root / 'urdf').is_dir():
+            return root
+    return ROOT / 'r1-7a_sdk'
+
+
 def build_scene():
-    sources = list((ROOT.parent / 'r1-7a_sdk' / 'urdf').glob('**/R1_Robotic_Arm.urdf'))
+    sources = list((sdk_root() / 'urdf').glob('**/R1_Robotic_Arm.urdf'))
     if not sources:
         raise FileNotFoundError('Cannot find r1-7a_sdk/urdf/**/R1_Robotic_Arm.urdf')
     source = sources[0]
@@ -74,7 +81,7 @@ def build_scene():
     add_gripper(bodies['Link7'], assets, actuators)
     ET.indent(root, space='  ')
     ET.ElementTree(root).write(SCENE, encoding='utf-8', xml_declaration=True)
-    shutil.copyfile(ROOT.parent / 'r1-7a_sdk' / 'LICENSE', SCENE.parent / 'SDK_LICENSE')
+    shutil.copyfile(sdk_root() / 'LICENSE', SCENE.parent / 'SDK_LICENSE')
     return SCENE
 
 
