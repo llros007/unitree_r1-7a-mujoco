@@ -190,7 +190,10 @@ def verify():
     advance(10)
     assert np.array_equal(env.data.qpos, frozen_q) and env.data.time == frozen_time
     press(glfw.KEY_R)
-    assert env.gripper_open and not env.paused and not viewer.keys
+    assert env.paused and not viewer.keys and env.zero_return is None
+    assert np.array_equal(env.data.qpos, frozen_q), 'R must not teleport while paused'
+    env.reset()  # Explicit fixture reset; R now requests a checked slow zero return.
+    assert env.gripper_open and not env.paused
     assert np.linalg.norm(env.tcp_position - env.home_position) < 0.001
     result = env.run_demo()
     assert result['passed'], result

@@ -138,6 +138,8 @@ class ArmEnvironment:
         return None
 
     def reset(self):
+        self.zero_return = None
+        self.zero_return_feedback = None
         mujoco.mj_resetData(self.model, self.data)
         self.target_position = self.home_position.copy()
         self.target_rotation = self.home_rotation.copy()
@@ -272,6 +274,7 @@ class ArmEnvironment:
 
     def use_cartesian_control(self):
         """Resume keyboard/IK control from the current arm position."""
+        self.zero_return = None
         self.q_command = self.data.qpos[self.qids].copy()
         self.target_position = self.tcp_position
         self.target_rotation = self.data.site_xmat[self.tcp_id].reshape(3, 3).copy()
@@ -280,6 +283,100 @@ class ArmEnvironment:
         self.cartesian_control = True
         self._command_countdown = 0
         self.update_marker()
+
+    def start_zero_return(self, speed_deg=5., accel_deg=10.):
+        """Plan checked, synchronized cosine segments without changing measured qpos."""
+        if self.paused:
+            return 'Paused: press P before returning to zero'
+        if self.zero_return is not None:
+            return 'Returning to zero'
+        if not np.isfinite([speed_deg, accel_deg]).all() or min(speed_deg, accel_deg) <= 0:
+            raise ValueError('Zero-return speed and acceleration must be finite and positive')
+        measured = self.data.qpos[self.qids].copy()
+        start = np.clip(measured, self.limits[:, 0], self.limits[:, 1])
+        if np.max(np.abs(start - measured)) > np.deg2rad(.02):
+            return 'Blocked: measured pose outside joint limits; verify calibration'
+        goal = np.zeros(7)
+        if np.any(goal < self.limits[:, 0]) or np.any(goal > self.limits[:, 1]):
+            return 'Blocked: zero outside model joint limits'
+        waypoints = [goal]
+        if self.tool_motion_collision(start, goal) is not None:
+            waypoints = [CLEARANCE_Q, goal]
+        previous = start
+        segments = []
+        for destination in waypoints:
+            if self.tool_motion_collision(previous, destination) is not None:
+                return 'Blocked: no checked tool/arm path to zero'
+            delta = float(np.max(np.abs(destination - previous)))
+            if delta > 1e-9:
+                # Cosine profile: peak v=pi*delta/(2*T), peak a=pi^2*delta/(2*T^2).
+                duration = max(.2, np.pi * delta / (2 * np.deg2rad(speed_deg)),
+                               np.pi * np.sqrt(delta / (2 * np.deg2rad(accel_deg))))
+                segments.append((previous.copy(), destination.copy(), duration))
+            previous = destination
+        self.use_cartesian_control()
+        self.q_command = start.copy()
+        self.reference.reset(start)
+        self.zero_return = dict(segments=segments, index=0, elapsed=0., settling=0., stable=0)
+        self.cartesian_control = False
+        print(f'缓慢回零：峰值 {speed_deg:g} 度/秒，加速度不超过 {accel_deg:g} 度/秒²，'
+              f'轨迹约 {sum(s[2] for s in segments):.2f} 秒；P/Tab可取消并保持', flush=True)
+        return 'Returning to zero'
+
+    def advance_zero_return(self, dt):
+        if not np.isfinite(dt) or dt <= 0:
+            raise ValueError('Zero-return timestep must be finite and positive')
+        plan = self.zero_return
+        if plan is None:
+            return 'Hold zero'
+        status = 'Returning to zero'
+        if plan['index'] < len(plan['segments']):
+            start, goal, duration = plan['segments'][plan['index']]
+            plan['elapsed'] = min(duration, plan['elapsed'] + dt)
+            s = plan['elapsed'] / duration
+            q = start + (goal - start) * .5 * (1 - np.cos(np.pi * s))
+            dq = (goal - start) * (.5 * np.pi / duration * np.sin(np.pi * s))
+            if s >= 1:
+                q, dq = goal.copy(), np.zeros(7)
+                plan['index'] += 1
+                plan['elapsed'] = 0.
+        else:
+            q, dq = np.zeros(7), np.zeros(7)
+            plan['settling'] += dt
+            feedback = self.zero_return_feedback
+            measured, velocity = ((self.data.qpos[self.qids], self.data.qvel[self.dofs])
+                                  if feedback is None else feedback)
+            near = (np.max(np.abs(measured)) <= np.deg2rad(1)
+                    and np.max(np.abs(velocity)) <= .05)
+            plan['stable'] = plan['stable'] + 1 if near else 0
+            if plan['stable'] >= 20 or plan['settling'] >= 5.:
+                arrived = plan['stable'] >= 20
+                self.zero_return = None
+                self.cartesian_control = True
+                status = 'At zero (within 1 deg)' if arrived else 'Zero not reached: holding target'
+                print(status, flush=True)
+            else:
+                status = 'Settling at zero'
+        measured = (self.data.qpos[self.qids] if self.zero_return_feedback is None
+                    else self.zero_return_feedback[0])
+        if (self.tool_motion_collision(self.q_command, q) is not None
+                or self.tool_motion_collision(measured, q) is not None):
+            self.use_cartesian_control()
+            return 'Blocked: zero-return path changed; holding current pose'
+        self.q_command = q.copy()
+        self.reference.q, self.reference.dq = q.copy(), dq.copy()
+        tau = self.gravity_feedforward(q)
+        self.motors.set_command(q, dq, tau)
+        self.ik_data.qpos[self.qids] = q
+        mujoco.mj_forward(self.model, self.ik_data)
+        self.target_position = self.ik_data.site_xpos[self.tcp_id].copy()
+        self.target_rotation = self.ik_data.site_xmat[self.tcp_id].reshape(3, 3).copy()
+        self.update_marker()
+        return status
+
+    def gravity_feedforward(self, q):
+        return (self.motors.gravity_feedforward_scale * self.gravity_torque(q)
+                if self.motors.gravity_feedforward_scale else np.zeros(7))
 
     def gravity_torque(self, q):
         """Joint-side gravity torque for a seven-joint target pose (Nm)."""

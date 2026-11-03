@@ -67,7 +67,17 @@ def main():
     env.step()
     assert np.array_equal(env.q_command, before)
     press(v, glfw.KEY_R)
-    assert not v.keys and np.array_equal(env.q_command, np.zeros(7))
+    assert not v.keys and env.paused and env.zero_return is None
+    press(v, glfw.KEY_P)
+    before_pose = env.data.qpos.copy()
+    press(v, glfw.KEY_R)
+    np.testing.assert_array_equal(env.data.qpos, before_pose)
+    for _ in range(1000):
+        v.controls(.01)
+        env.step()
+        if env.zero_return is None:
+            break
+    assert env.zero_return is None and np.array_equal(env.q_command, np.zeros(7))
     # The old XYZ keys must not move the endpoint in joint mode.
     press(v, glfw.KEY_W)
     v.controls(.01)

@@ -70,7 +70,7 @@ Click the simulation window to focus it. Hold keys for continuous motion; releas
 | U / O | Rotate about +Z / −Z |
 | Shift + motion | Fine adjustment |
 | Space | Toggle gripper open / closed |
-| R | Reset the arm, cube and gripper |
+| R | Smoothly return all seven joints to zero and hold; keep object/gripper state |
 | P | Pause / resume |
 | H | Print help in the terminal |
 | Esc | Exit |
@@ -90,7 +90,7 @@ Translation speed is 0.10 m/s, or 0.025 m/s with Shift. Rotation speed is 0.75 r
 
 The shared miniature pot is about 60 mm wide and 55.4 mm high with an estimated mass of 80 g. Use `--object cube` to select the earlier cube scene.
 
-The inverse kinematics controller limits targets to the reachable workspace. It does not plan collision-free paths; control the route manually and use **R** to reset if needed.
+The inverse kinematics controller limits targets to the reachable workspace. It does not plan collision-free paths; control the route manually and use **R** for a checked slow zero return if needed.
 
 ## Headless verification and screenshots
 
@@ -217,7 +217,7 @@ This is a community simulation project. Thanks to [Unitree Robotics](https://git
 
 The gripper attaches to Link7's radial end plate, matching the supplied CAD reference, rather than along the J7 shaft. The SDK mesh plate is near local Y=-47.736 mm. The simulated hand origin is `(0,-0.061,0)` m with tool +Z=-Link7 Y, +X=-Link7 Z and +Y=Link7 X. Adapter dimensions are simulation approximations, not fabrication drawings. TCP, local inertias and camera follow the complete hand transform. J7 axes and calibration data are unchanged. The shared builder upgrades cached scene.xml mounting transforms.
 
-Keyboard/YOLO CLIs default to `--initial-pose zero`: all seven joints are zero on startup/R reset, now clear of tool/arm interference throughout the jaw sweep. `clearance` selects J4=45 degrees; `observation` selects the workspace observation target. G/`--auto` unfolds along a checked joint path before scanning, using an elbow waypoint when necessary to avoid sweeping the base. V/`--detect-only` uses the current camera pose; select `observation` to view the workspace.
+Keyboard/YOLO CLIs default to `--initial-pose zero`: all seven joints are zero on startup; keyboard R smoothly returns to zero, while YOLO R still resets its task scene, now clear of tool/arm interference throughout the jaw sweep. `clearance` selects J4=45 degrees; `observation` selects the workspace observation target. G/`--auto` unfolds along a checked joint path before scanning, using an elbow waypoint when necessary to avoid sweeping the base. V/`--detect-only` uses the current camera pose; select `observation` to view the workspace.
 
 Tool/arm explicit contact pairs exempt only the fixed Link7 mounting interface; previous adapter/Link5–6 exceptions are removed. Startup requires 1 mm clearance; Cartesian commands and unfolding paths use sampled checks. Convex mesh hulls can conservatively reject poses. This is not full-arm continuous collision planning or physical mounting certification. `python verify_tool_clearance.py` verifies flange axes, legacy mounting interference, zero jaw sweep/hold/reset and unfolding, with/without the camera.
 
@@ -239,3 +239,57 @@ PYTHON=python ./run.sh --control-mode joint --joint-speed 10 --calibration r1-7a
 ```
 
 Press **Tab** to switch between IK/Cartesian and joint-angle modes without restarting; `--control-mode` only selects the startup mode. Switching rebases targets on the measured joints/TCP, clears held keys and preserves pause state. The window title and overlay show the mode. YOLO supports the same shortcut while idle; switching is blocked during an automatic task. 1–7 selects J1–J7; hold UP/+ to increase, DOWN/- to decrease (keypad +/- supported). Release holds the target; Shift scales the default 20 deg/s rate by 0.25. Space/R/P and mouse controls remain available. The overlay shows measured/target/limit angles in calibrated URDF degrees, with a star on the selected joint. Joint limits, tool/arm swept clearance checks and the existing filtered PD/gravity controller remain active; command lead is bounded to 5 degrees. The default `--control-mode cartesian` retains endpoint controls. Check with `python verify_joint_keyboard.py`.
+
+## Real-arm keyboard and simulation-only mode
+
+`real_keyboard.py` shares the simulator's keyboard controller. Serial hardware is
+opened **only with `--hardware`**. The bridge and calibration default to this
+repository's `r1-7a_sdk/`; sibling SDK files never override configuration paths.
+Use `--calib` / `--calibration` to select a different file explicitly.
+
+```bash
+# Simulation only, even when a serial device exists
+python real_keyboard.py --mode sim --control-mode joint
+
+# Hardware, showing measured joints (adjust the serial port)
+python real_keyboard.py --mode sync --hardware --port /dev/ttyUSB3 \
+  --calib r1-7a_sdk/config/joint_calib.txt --joint-speed 5
+
+# Hardware, showing the simulated plant while sending its reference commands
+python real_keyboard.py --mode sim --hardware --port /dev/ttyUSB3 \
+  --calib r1-7a_sdk/config/joint_calib.txt --joint-speed 5
+```
+
+Both hardware modes hold the measured pose and require 20 consecutive FOC samples
+before motion. Tab switches IK/joint control; 1–7 selects a joint; Up/Down jogs;
+Shift slows motion. R follows a checked cosine trajectory to all-zero joints, starting from measured
+joints whenever hardware is connected. Default peak speed is 5 deg/s and maximum
+acceleration 10 deg/s² (`--home-speed-deg`, `--home-accel-deg`, also supported by
+`./run.sh`). It checks model joint limits and tool/arm paths, trying a J4=45-degree
+waypoint if needed. This is not full environment collision planning. Arrival
+requires measured errors within 1 degree and low velocity for 20 cycles. If the
+arm has not arrived 5 seconds after the trajectory ends, it reports this and
+continues holding the target. Tab or P cancels a return; resuming does not replay
+it. R does not start while paused. P freezes the reference with zero target velocity and
+cancels pending motion. Space does not drive the hardware gripper.
+
+A separate control worker owns its model and bus; rendering uses copied snapshots.
+Bus response timeout defaults to 0.1 seconds (`--feedback-timeout`). FOC exit,
+faults, tracking error above 0.4 rad, or an excessive estimated total torque stop
+the bus. Missed periods are not replayed as command bursts. With hardware attached, an unresponsive input
+window pauses motion after 0.5 seconds. Pure simulation does not auto-pause on
+render delays. Click the MuJoCo window before pressing keys; in joint mode, press
+4 then Up to jog J4. This is not a hard real-time controller,
+and the torque estimate does not replace drive-level limits. Shutdown removes
+active support. Support the arm and verify known-pose angles before using a new
+calibration.
+
+Offline regressions, without hardware: `MUJOCO_GL=egl python verify_real_keyboard.py`.
+
+Visible X11 end-to-end keyboard test, without hardware:
+`MUJOCO_GL=glfw python verify_real_keyboard_gui.py`.
+It sends key events only to its own GLFW window and writes screenshots and a JSON
+report to `outputs/teleop_gui_check/`.
+
+Zero-return regressions: `MUJOCO_GL=egl python verify_zero_return.py`. Hardware
+paths are tested with a fake bus only; verify physical zero and calibration first.

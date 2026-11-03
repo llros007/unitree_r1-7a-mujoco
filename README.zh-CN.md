@@ -72,7 +72,7 @@ python -m pip install -r yolo_grasp/requirements.txt
 | U / O | 绕世界 Z 轴正 / 负旋转 |
 | Shift + 移动或旋转 | 慢速微调 |
 | Space | 切换夹爪开 / 合 |
-| R | 重置机械臂、物体及夹爪，回到共用观察姿态 |
+| R | 平滑回到七关节零位，到位后保持；不重置物体或夹爪 |
 | P | 暂停 / 继续 |
 | H | 终端打印帮助 |
 | Esc | 退出 |
@@ -90,7 +90,7 @@ python -m pip install -r yolo_grasp/requirements.txt
 4. 按 Q 抬起，成功后显示 `OBJECT LIFTED!`。
 5. 搬运至绿色放置区 `(-0.12,0.25)` m，下降到 TCP Z≈0.642 m 后释放，等待张开再抬起。
 
-按键按得过久可能超过可达空间，IK 会限制目标；接近关节限位时换方向或按 R 复位。IK 只求末端位姿，不做障碍物路径规划，绕行和姿态由操作者控制。
+按键按得过久可能超过可达空间，IK 会限制目标；接近关节限位时换方向或按 R 缓慢回零。IK 只求末端位姿，不做障碍物路径规划，绕行和姿态由操作者控制。
 
 ## 验证与截图
 
@@ -219,7 +219,7 @@ python prepare_gripper.py --source /path/to/XLeRobot
 
 夹爪按参考 CAD 的连接关系安装在 Link7 的径向端面，而非沿 J7 转轴方向安装。SDK 网格端面约位于 Link7 局部 Y=-47.736 mm；仿真转接盘/夹爪体原点为 `(0,-0.061,0)` m，工具轴 `+Z=-Link7 Y`、`+X=-Link7 Z`、`+Y=Link7 X`。转接盘尺寸和间距为仿真近似，不是可直接加工的实物图纸。TCP、惯量及腕部相机随整个 hand 安装变换一起更新，J7 的 URDF 关节轴和标定数据没有改变。旧缓存 scene.xml 在共用场景构建时会自动应用正确安装变换。
 
-键盘与 YOLO CLI 默认 `--initial-pose zero`：启动和 R 复位时 J1～J7 全为 0 rad；当前安装下已检查夹爪开合无末端/臂体干涉。可用 `--initial-pose clearance` 选择 J4=45° 的展开过渡姿态，或 `--initial-pose observation` 选择原观察目标。YOLO G / `--auto` 先经检查的关节路径展开，再扫描；必要时先展开 J4，以避免多个关节同时旋转时扫过底座。V / `--detect-only` 只观察当前位置；需要观察工作区可加 `--initial-pose observation`。
+键盘与 YOLO CLI 默认 `--initial-pose zero`：启动时 J1～J7 全为 0 rad；普通键盘 R 改为缓慢回零，YOLO 的 R 仍重置任务场景；当前安装下已检查夹爪开合无末端/臂体干涉。可用 `--initial-pose clearance` 选择 J4=45° 的展开过渡姿态，或 `--initial-pose observation` 选择原观察目标。YOLO G / `--auto` 先经检查的关节路径展开，再扫描；必要时先展开 J4，以避免多个关节同时旋转时扫过底座。V / `--detect-only` 只观察当前位置；需要观察工作区可加 `--initial-pose observation`。
 
 共享场景明确启用夹爪、支架、相机与基座/臂体的接触对，仅 Link7 固定安装界面免检，已取消旧转接盘与 Link5/Link6 的例外。启动保留 1 mm 余量，笛卡尔命令及展开路径进行采样检查；网格凸包可能保守拒绝部分姿态。这不是全臂连续碰撞规划或实物安装认证。`python verify_tool_clearance.py` 检查法兰方向、旧错误安装干涉、全零位开合/保持/复位、展开，相机开启和关闭均覆盖。
 
@@ -245,3 +245,45 @@ PYTHON=python ./run.sh --control-mode joint --joint-speed 10 --calibration r1-7a
 ```
 
 无需重启，按 **Tab** 在 IK 末端控制和关节角控制之间切换；`--control-mode` 只决定启动模式。切换先以当前实测关节/TCP位置重新设定保持目标并清空按键，保留暂停状态；窗口标题和界面显示当前模式。YOLO 窗口空闲时同样支持 Tab，自动任务执行期间禁止手动切换。1～7 选择 J1～J7；按住 ↑ 或 + 增大目标角，↓ 或 - 减小（支持小键盘 +/-），松开保持。默认20度/秒，Shift降到四分之一；Space开合夹爪、R复位、P暂停、鼠标视角操作不变。界面显示各关节反馈角、目标角、限位，选中关节带星号；角度为标定后的 URDF 关节角（度），不是原始电机角。方向按 URDF 右手定则。保留关节限位、末端/臂体间隙检查及原PD/重力补偿；目标最多领先反馈5度，避免持续积累跟踪误差。默认 `--control-mode cartesian` 保留原末端控制。验证：`python verify_joint_keyboard.py`。
+
+## 真机键盘与纯仿真
+
+`real_keyboard.py` 复用仿真的按键，但只有显式添加 `--hardware` 才打开串口。
+默认桥接程序和标定文件均在本仓库 `r1-7a_sdk/` 内；不会自动选择旁边 SDK 的文件。
+`--calib` / `--calibration` 可以明确指定标定文件，`motor_config.json` 中的相对标定路径以配置文件所在目录为准。
+
+```bash
+# 纯仿真：即使串口存在，也不会连接真机
+python real_keyboard.py --mode sim --control-mode joint
+
+# 真机：画面显示实测姿态；请按实际串口修改
+python real_keyboard.py --mode sync --hardware --port /dev/ttyUSB3 \
+  --calib r1-7a_sdk/config/joint_calib.txt --joint-speed 5
+
+# 真机可选模式：显示仿真积分姿态，发送同一参考轨迹
+python real_keyboard.py --mode sim --hardware --port /dev/ttyUSB3 \
+  --calib r1-7a_sdk/config/joint_calib.txt --joint-speed 5
+```
+
+两个真机模式都先保持实测姿态并检查所有关节连续20周期处于 FOC，之后才接受运动输入。
+Tab 切换 IK / 关节模式，1–7 选择关节，上下键移动，Shift 微调。
+R 从当前姿态缓慢回到七关节零位；连接硬件时从实测关节角开始。默认峰值速度5°/秒、最大加速度10°/秒²，可用 `--home-speed-deg`、`--home-accel-deg` 调整（普通 `./run.sh` 也支持）。
+回零前检查模型关节限位和末端/臂体路径；直接路径不通时尝试J4=45°过渡点，仍不通则拒绝。这个检查不是完整环境避障规划。
+到位依据为七关节实测角均在±1°内且速度较低，连续20周期；轨迹结束5秒后仍未到位则提示未到零并继续保持目标。
+回零中 P 或 Tab 会取消轨迹并保持，恢复后不会自动继续回零。暂停时按 R 不启动，先按 P 恢复。
+P 冻结当前参考角并清零参考速度，恢复后不执行暂停前积累的旧目标。
+Space 不控制真机夹爪舵机。
+
+发送指令的控制线程与 GLFW 渲染分开，模型状态通过快照显示。
+总线响应默认超时为0.1秒（`--feedback-timeout`），退出 FOC、报错、跟踪误差超过0.4 rad 或估算总力矩超限会停机；不会用补发突发指令追赶时间。
+连接真机时，窗口超过0.5秒没有处理输入会清键并暂停保持；纯仿真不会因渲染延迟自动暂停。
+按键必须在 MuJoCo 窗口中输入，先点击窗口；关节模式可按4再按上箭头测试J4。Python/Linux 调度不提供硬实时保证；总力矩估算也不能替代驱动器硬件保护。
+退出和故障处理会停驱动，可能失去主动支撑。首次使用新标定前，应支撑机械臂并核对已知姿态下的角度。
+
+离线回归（不连接硬件）：`MUJOCO_GL=egl python verify_real_keyboard.py`。
+
+桌面端到端检查（仅X11，自动向自己的GLFW窗口发送按键，不连接硬件）：
+`MUJOCO_GL=glfw python verify_real_keyboard_gui.py`。
+测试截图和JSON报告保存到 `outputs/teleop_gui_check/`。
+
+回零轨迹离线检查：`MUJOCO_GL=egl python verify_zero_return.py`。真机仅做假总线验证，需先核对标定、实物零位和工作空间。

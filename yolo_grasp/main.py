@@ -159,6 +159,8 @@ class Application:
 
 
 class Viewer(KeyboardViewer):
+    reset_label = 'reset scene'
+
     def __init__(self, app):
         self.app = app
         super().__init__(app.env)

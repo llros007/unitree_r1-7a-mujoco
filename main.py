@@ -7,7 +7,7 @@ import sys
 # the MuJoCo window can be created.
 _SYSTEM_LIBCXX = '/usr/lib/x86_64-linux-gnu/libstdc++.so.6'
 _SYSTEM_DRI = '/usr/lib/x86_64-linux-gnu/dri'
-if os.path.isfile(_SYSTEM_LIBCXX) and os.environ.get('_R1_GL_READY') != '1':
+if __name__ == '__main__' and os.path.isfile(_SYSTEM_LIBCXX) and os.environ.get('_R1_GL_READY') != '1':
     os.environ['_R1_GL_READY'] = '1'
     os.environ['LIBGL_DRIVERS_PATH'] = _SYSTEM_DRI
     preload = os.environ.get('LD_PRELOAD', '')
@@ -35,7 +35,7 @@ R1-7A + XLeRobot SO101 TPU95A MuJoCo 键盘抓取环境
   Tab: 切换 IK末端控制 / 关节角控制（先保持当前姿态）
   --control-mode joint: 关节角控制；1~7 选择关节，↑/+ 增大，↓/- 减小
   关节模式默认 20度/秒；Shift 为四分之一速度；松键保持
-  Space: 夹爪开/合       R: 重置场景          P: 暂停/继续
+  Space: 夹爪开/合       R: 缓慢回到零位      P: 暂停/继续
   H: 显示帮助            Esc: 退出
   鼠标左键拖动: 旋转视角   右键拖动: 平移视角   滚轮: 缩放
 抓取: 转正夹爪并移到花盆上方 -> E 下降到盆壁 -> Space 合拢 -> Q 抬起。
@@ -44,7 +44,11 @@ R1-7A + XLeRobot SO101 TPU95A MuJoCo 键盘抓取环境
 
 
 class KeyboardViewer:
-    def __init__(self, env, control_mode='cartesian', joint_speed=20.):
+    reset_label = 'slow zero'
+    home_speed_deg = 5.
+    home_accel_deg = 10.
+
+    def __init__(self, env, control_mode='cartesian', joint_speed=20., home_speed_deg=5., home_accel_deg=10.):
         self.env = env
         if control_mode not in ('cartesian', 'joint'):
             raise ValueError('Unknown keyboard control mode')
@@ -52,6 +56,9 @@ class KeyboardViewer:
             raise ValueError('Joint speed must be positive and finite (deg/s)')
         self.control_mode = control_mode
         self.joint_speed = np.deg2rad(joint_speed)
+        if not np.isfinite([home_speed_deg, home_accel_deg]).all() or min(home_speed_deg, home_accel_deg) <= 0:
+            raise ValueError('Home speed/acceleration must be finite and positive')
+        self.home_speed_deg, self.home_accel_deg = home_speed_deg, home_accel_deg
         self.selected_joint = 0
         self.joint_status = 'Joint jog'
         if not glfw.init():
@@ -100,12 +107,18 @@ class KeyboardViewer:
         if key == glfw.KEY_ESCAPE:
             glfw.set_window_should_close(window, True)
         elif key == glfw.KEY_SPACE:
+            if self.env.zero_return is not None:
+                self.env.use_cartesian_control()
             self.env.gripper_open = not self.env.gripper_open
         elif key == glfw.KEY_R:
-            self.env.reset()
             self.keys.clear()
-            self.joint_status = 'Reset'
+            self.joint_status = self.env.start_zero_return(self.home_speed_deg, self.home_accel_deg)
+            if self.joint_status.startswith('Blocked'):
+                self.env.use_cartesian_control()
+            print(self.joint_status, flush=True)
         elif key == glfw.KEY_P:
+            if self.env.zero_return is not None:
+                self.env.use_cartesian_control()
             self.env.paused = not self.env.paused
         elif key == glfw.KEY_H:
             print(HELP, flush=True)
@@ -155,6 +168,11 @@ class KeyboardViewer:
 
     def controls(self, dt):
         if self.env.paused:
+            return
+        if self.env.zero_return is not None:
+            self.joint_status = self.env.advance_zero_return(dt)
+            if self.env.zero_return is None:
+                self.keys.clear()
             return
         key = lambda k: float(k in self.keys)
         slow = glfw.KEY_LEFT_SHIFT in self.keys or glfw.KEY_RIGHT_SHIFT in self.keys
@@ -206,6 +224,7 @@ class KeyboardViewer:
                          'Angles: URDF joint degrees, after calibration. Release: hold.\n'
                          'SPACE: gripper | R: reset | P: pause | ESC: exit\n'
                          'Mouse: left orbit | right pan | wheel zoom')
+        help_text = help_text.replace('R: reset', f'R: {getattr(self, "reset_label", "reset")}')
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_BOTTOMLEFT, viewport, help_text, '', self.context)
         glfw.swap_buffers(self.window)
 
@@ -252,6 +271,8 @@ def main():
     parser.add_argument('--control-mode', choices=['cartesian', 'joint'], default='cartesian',
                         help='键盘控制模式：cartesian 末端位姿，joint 单关节角度')
     parser.add_argument('--joint-speed', type=float, default=20., help='关节角模式速度，度/秒，默认20；Shift为四分之一')
+    parser.add_argument('--home-speed-deg', type=float, default=5., help='R回零峰值速度，度/秒')
+    parser.add_argument('--home-accel-deg', type=float, default=10., help='R回零最大加速度，度/秒²')
     parser.add_argument('--demo', action='store_true', help='运行物理抓取、搬运、放置验证')
     parser.add_argument('--snapshot', type=Path, help='保存场景 PNG（需要 Pillow）')
     parser.add_argument('--seconds', type=float, default=None, help='窗口自动关闭时间，便于冒烟测试')
@@ -268,6 +289,8 @@ def main():
     args = parser.parse_args()
     if not np.isfinite(args.joint_speed) or args.joint_speed <= 0:
         parser.error('--joint-speed 必须为正的有限数值（度/秒）')
+    if not np.isfinite([args.home_speed_deg, args.home_accel_deg]).all() or min(args.home_speed_deg, args.home_accel_deg) <= 0:
+        parser.error('回零速度和加速度必须为正的有限数值')
     env = ArmEnvironment(motor_config=args.motor_config, object_kind=args.object,
                          end_effector_config=args.end_effector_config, include_camera=args.wrist_camera, initial_pose=args.initial_pose, calibration_path=args.calibration)
     print('Joint torque control: gravity feedforward scale=', env.motors.gravity_feedforward_scale,
@@ -300,7 +323,9 @@ def run_session(env, args):
         snapshot(env, args.snapshot)
     if not args.headless:
         KeyboardViewer(env, control_mode=getattr(args, 'control_mode', 'cartesian'),
-                       joint_speed=getattr(args, 'joint_speed', 20.)).run(args.seconds)
+                       joint_speed=getattr(args, 'joint_speed', 20.),
+                       home_speed_deg=getattr(args, 'home_speed_deg', 5.),
+                       home_accel_deg=getattr(args, 'home_accel_deg', 10.)).run(args.seconds)
 
 
 if __name__ == '__main__':
