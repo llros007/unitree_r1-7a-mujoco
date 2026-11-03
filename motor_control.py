@@ -48,7 +48,10 @@ class ArmMotorController:
             calibration = Path(calibration_path).expanduser().resolve()
             self.config['sdk_protocol_calibration'] = str(calibration)
         elif calibration is not None:
-            calibration = path.resolve().parent / calibration
+            configured = path.resolve().parent / calibration
+            live = path.resolve().parent.parent / 'r1-7a_sdk' / 'config' / 'joint_calib.txt'
+            # The arm's calibration is the file calibrate_joints writes beside this repo.
+            calibration = live if Path(calibration).name == 'joint_calib.txt' and live.is_file() else configured
         self.protocol = SdkProtocol(calibration) if calibration is not None else None
         print('SDK calibration:', self.protocol.path if self.protocol else 'disabled', flush=True)
         self.reference_time_constant = float(config.get('cartesian_reference_time_constant_s', 0.))

@@ -1,5 +1,20 @@
 #!/usr/bin/env python3
 """Keyboard teleoperation and headless verification for the R1-7A scene."""
+import os
+import sys
+
+# Conda's libstdc++ is too old for the system OpenGL driver. Reload once so
+# the MuJoCo window can be created.
+_SYSTEM_LIBCXX = '/usr/lib/x86_64-linux-gnu/libstdc++.so.6'
+_SYSTEM_DRI = '/usr/lib/x86_64-linux-gnu/dri'
+if os.path.isfile(_SYSTEM_LIBCXX) and os.environ.get('_R1_GL_READY') != '1':
+    os.environ['_R1_GL_READY'] = '1'
+    os.environ['LIBGL_DRIVERS_PATH'] = _SYSTEM_DRI
+    preload = os.environ.get('LD_PRELOAD', '')
+    if _SYSTEM_LIBCXX not in preload.split():
+        os.environ['LD_PRELOAD'] = (_SYSTEM_LIBCXX + ' ' + preload).strip()
+    os.execv(sys.executable, [sys.executable, *sys.argv])
+
 import argparse
 import json
 from pathlib import Path
