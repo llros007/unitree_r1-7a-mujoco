@@ -35,7 +35,11 @@ bool waitForFeedback(ArmMotorBus& bus) {
     auto next = std::chrono::steady_clock::now();
     while (g_running && std::chrono::steady_clock::now() < deadline) {
         sendZeroTorque(bus);
-        if (bus.allFeedbackReady()) {
+        bool fresh = bus.allFeedbackReady();
+        for (const auto& info: bus.feedbackInfo()) {
+            fresh = fresh && info.packets && info.age_s >= 0 && info.age_s < .05;
+        }
+        if (fresh) {
             return true;
         }
         next += period;
@@ -46,8 +50,27 @@ bool waitForFeedback(ArmMotorBus& bus) {
 
 int g_state_fd = STDOUT_FILENO;
 
-void printState(const std::array<ArmJointState, kArmJointCount>& st) {
+bool printState(const ArmMotorBus& bus) {
+    const auto st = bus.states();
+    const auto info = bus.feedbackInfo();
+    for (int i=0; i<kArmJointCount; ++i) {
+        if (!info[i].packets || info[i].age_s > .1) {
+            std::cerr << "Stale motor feedback J" << i+1 << " age=" << info[i].age_s << "s\n";
+            return false;
+        }
+    }
     std::ostringstream out;
+    out << "INFO {\"packets\":[";
+    for (int i=0; i<kArmJointCount; ++i) out << (i?",":"") << info[i].packets;
+    out << "],\"age_s\":[";
+    for (int i=0; i<kArmJointCount; ++i) out << (i?",":"") << info[i].age_s;
+    out << "],\"driver_temperature_c\":[";
+    for (int i=0; i<kArmJointCount; ++i) out << (i?",":"") << info[i].driver_temperature_c;
+    out << "],\"winding_temperature_c\":[";
+    for (int i=0; i<kArmJointCount; ++i) out << (i?",":"") << info[i].winding_temperature_c;
+    out << "],\"voltage_v\":[";
+    for (int i=0; i<kArmJointCount; ++i) out << (i?",":"") << info[i].voltage_v;
+    out << "]}\n";
     out << "STATE";
     for (int i = 0; i < kArmJointCount; ++i) {
         out << ' ' << st[i].q;
@@ -68,7 +91,9 @@ void printState(const std::array<ArmJointState, kArmJointCount>& st) {
     const std::string line = out.str();
     if (write(g_state_fd, line.data(), line.size()) < 0) {
         g_running = false;
+        return false;
     }
+    return true;
 }
 
 }  // namespace
@@ -108,11 +133,15 @@ int main(int argc, char** argv) {
     }
     bus.clearFaults();
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
-    sendZeroTorque(bus);
+    // clearFaults + delay can invalidate old snapshots; reacquire all joints.
+    if (!waitForFeedback(bus)) {
+        std::cerr << "Fresh feedback timeout after clearing faults\n";
+        bus.stop(); bus.close(); return 1;
+    }
 
     std::cout << std::unitbuf;
     std::cerr << "cmd stream ready on " << port << '\n';
-    printState(bus.states());
+    if (!printState(bus)) { bus.stop(); bus.close(); return 1; }
 
     std::string line;
     while (g_running && std::getline(std::cin, line)) {
@@ -146,7 +175,7 @@ int main(int argc, char** argv) {
             cmds[i].kd = v[28 + i];
         }
         bus.step(cmds);
-        printState(bus.states());
+        if (!printState(bus)) break;
     }
 
     bus.stop();

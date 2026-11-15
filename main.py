@@ -45,10 +45,10 @@ R1-7A + XLeRobot SO101 TPU95A MuJoCo 键盘抓取环境
 
 class KeyboardViewer:
     reset_label = 'slow zero'
-    home_speed_deg = 5.
-    home_accel_deg = 10.
+    home_speed_deg = 10.
+    home_accel_deg = 20.
 
-    def __init__(self, env, control_mode='cartesian', joint_speed=20., home_speed_deg=5., home_accel_deg=10.):
+    def __init__(self, env, control_mode='cartesian', joint_speed=20., home_speed_deg=10., home_accel_deg=20.):
         self.env = env
         if control_mode not in ('cartesian', 'joint'):
             raise ValueError('Unknown keyboard control mode')
@@ -224,6 +224,7 @@ class KeyboardViewer:
                          'Angles: URDF joint degrees, after calibration. Release: hold.\n'
                          'SPACE: gripper | R: reset | P: pause | ESC: exit\n'
                          'Mouse: left orbit | right pan | wheel zoom')
+        help_text = getattr(self, 'control_help', help_text)
         help_text = help_text.replace('R: reset', f'R: {getattr(self, "reset_label", "reset")}')
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_BOTTOMLEFT, viewport, help_text, '', self.context)
         glfw.swap_buffers(self.window)
@@ -271,8 +272,8 @@ def main():
     parser.add_argument('--control-mode', choices=['cartesian', 'joint'], default='cartesian',
                         help='键盘控制模式：cartesian 末端位姿，joint 单关节角度')
     parser.add_argument('--joint-speed', type=float, default=20., help='关节角模式速度，度/秒，默认20；Shift为四分之一')
-    parser.add_argument('--home-speed-deg', type=float, default=5., help='R回零峰值速度，度/秒')
-    parser.add_argument('--home-accel-deg', type=float, default=10., help='R回零最大加速度，度/秒²')
+    parser.add_argument('--home-speed-deg', type=float, default=10., help='R回零峰值速度，度/秒')
+    parser.add_argument('--home-accel-deg', type=float, default=20., help='R回零最大加速度，度/秒²')
     parser.add_argument('--demo', action='store_true', help='运行物理抓取、搬运、放置验证')
     parser.add_argument('--snapshot', type=Path, help='保存场景 PNG（需要 Pillow）')
     parser.add_argument('--seconds', type=float, default=None, help='窗口自动关闭时间，便于冒烟测试')
@@ -324,8 +325,8 @@ def run_session(env, args):
     if not args.headless:
         KeyboardViewer(env, control_mode=getattr(args, 'control_mode', 'cartesian'),
                        joint_speed=getattr(args, 'joint_speed', 20.),
-                       home_speed_deg=getattr(args, 'home_speed_deg', 5.),
-                       home_accel_deg=getattr(args, 'home_accel_deg', 10.)).run(args.seconds)
+                       home_speed_deg=getattr(args, 'home_speed_deg', 10.),
+                       home_accel_deg=getattr(args, 'home_accel_deg', 20.)).run(args.seconds)
 
 
 if __name__ == '__main__':

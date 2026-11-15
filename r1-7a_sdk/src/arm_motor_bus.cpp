@@ -55,6 +55,8 @@ struct ArmMotorBus::Impl {
     mutable std::mutex fb_mutex;
     std::array<ArmJointState, kArmJointCount> latest_motor{};  // raw motor frame
     std::array<bool, kArmJointCount> fb_ready{};
+    std::array<ArmFeedbackInfo, kArmJointCount> feedback_info{};
+    std::array<std::chrono::steady_clock::time_point, kArmJointCount> last_feedback{};
     bool opened = false;
     std::string port;
     int baudrate = kArmDefaultBaudrate;
@@ -91,6 +93,12 @@ struct ArmMotorBus::Impl {
         latest_motor[joint].timeout = fb->timeout;
         latest_motor[joint].error_code = fb->error_code;
         fb_ready[joint] = true;
+        auto& info = feedback_info[joint];
+        ++info.packets;
+        info.driver_temperature_c = fb->temp_driver;
+        info.winding_temperature_c = fb->temp_winding;
+        info.voltage_v = fb->voltage;
+        last_feedback[joint] = std::chrono::steady_clock::now();
     }
 
     void softStopAll() {
@@ -103,6 +111,7 @@ struct ArmMotorBus::Impl {
                     motor_ids[i], /*mode=*/0, /*timeout=*/false,
                     0.f, 0.f, 0.f, 0.f, 0.f);
                 serial.write(pkt);
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
             } catch (...) {
             }
         }
@@ -141,6 +150,7 @@ bool ArmMotorBus::open(const std::string& port,
         std::lock_guard<std::mutex> lock(impl_->fb_mutex);
         impl_->latest_motor = {};
         impl_->fb_ready = {};
+        impl_->feedback_info = {};
     }
     impl_->opened = true;
     std::cout << "[ArmMotorBus] opened " << port << " @ " << baudrate
@@ -296,10 +306,8 @@ void ArmMotorBus::step(const std::array<ArmJointCmd, kArmJointCount>& cmds) {
                     motor_tau, motor_dq, motor_q, c.kp, c.kd);
             }
             impl_->serial.write(packet);
-            // Half-duplex RS485: small gap so replies don't collide with next TX.
-            if (i + 1 < kArmJointCount + 1) {
-                std::this_thread::sleep_for(std::chrono::microseconds(115));
-            }
+            // Conservative half-duplex turnaround for USB adapters and motor replies.
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
         } catch (const std::exception& e) {
             std::cerr << "[ArmMotorBus] write joint " << i
                       << " failed: " << e.what() << std::endl;
@@ -322,6 +330,7 @@ void ArmMotorBus::clearFaults() {
         try {
             auto pkt = impl_->protocol.buildClearPacket(impl_->motor_ids[i]);
             impl_->serial.write(pkt);
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
         } catch (const std::exception& e) {
             std::cerr << "[ArmMotorBus] clearFault joint " << i
                       << " failed: " << e.what() << std::endl;
@@ -337,6 +346,7 @@ void ArmMotorBus::resetMotors() {
         try {
             auto pkt = impl_->protocol.buildResetPacket(impl_->motor_ids[i]);
             impl_->serial.write(pkt);
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
         } catch (const std::exception& e) {
             std::cerr << "[ArmMotorBus] reset joint " << i
                       << " failed: " << e.what() << std::endl;
@@ -363,6 +373,16 @@ std::array<ArmJointState, kArmJointCount> ArmMotorBus::states() const {
 std::array<ArmJointState, kArmJointCount> ArmMotorBus::motorStates() const {
     std::lock_guard<std::mutex> lock(impl_->fb_mutex);
     return impl_->latest_motor;
+}
+
+std::array<ArmFeedbackInfo, kArmJointCount> ArmMotorBus::feedbackInfo() const {
+    std::lock_guard<std::mutex> lock(impl_->fb_mutex);
+    auto out = impl_->feedback_info;
+    const auto now = std::chrono::steady_clock::now();
+    for (int i=0; i<kArmJointCount; ++i) {
+        out[i].age_s = out[i].packets ? std::chrono::duration<double>(now-impl_->last_feedback[i]).count() : -1.;
+    }
+    return out;
 }
 
 std::array<bool, kArmJointCount> ArmMotorBus::feedbackReady() const {

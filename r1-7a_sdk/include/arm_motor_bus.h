@@ -43,6 +43,14 @@ struct ArmJointState {
     uint32_t error_code = 0;
 };
 
+struct ArmFeedbackInfo {
+    uint64_t packets = 0;
+    double age_s = -1.;
+    int driver_temperature_c = 0;
+    int winding_temperature_c = 0;
+    float voltage_v = 0.f;
+};
+
 /**
  * Multi-joint IM6014 bus: one serial port, motors addressed by ID.
  * Default mapping: joint[i] <-> motor_id = i.
@@ -104,6 +112,7 @@ public:
 
     /** True if every joint has received at least one valid feedback. */
     bool allFeedbackReady() const;
+    std::array<ArmFeedbackInfo, kArmJointCount> feedbackInfo() const;
 
 private:
     struct Impl;

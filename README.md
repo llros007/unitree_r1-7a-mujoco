@@ -263,8 +263,8 @@ python real_keyboard.py --mode sim --hardware --port /dev/ttyUSB3 \
 Both hardware modes hold the measured pose and require 20 consecutive FOC samples
 before motion. Tab switches IK/joint control; 1–7 selects a joint; Up/Down jogs;
 Shift slows motion. R follows a checked cosine trajectory to all-zero joints, starting from measured
-joints whenever hardware is connected. Default peak speed is 5 deg/s and maximum
-acceleration 10 deg/s² (`--home-speed-deg`, `--home-accel-deg`, also supported by
+joints whenever hardware is connected. Default peak speed is 10 deg/s and maximum
+acceleration 20 deg/s² (`--home-speed-deg`, `--home-accel-deg`, also supported by
 `./run.sh`). It checks model joint limits and tool/arm paths, trying a J4=45-degree
 waypoint if needed. This is not full environment collision planning. Arrival
 requires measured errors within 1 degree and low velocity for 20 cycles. If the

@@ -248,6 +248,46 @@ PYTHON=python ./run.sh --control-mode joint --joint-speed 10 --calibration r1-7a
 
 ## 真机键盘与纯仿真
 
+### SO-101 主臂遥操作
+
+在项目目录用以下命令连接 SO-101 主臂，并先控制 R1-7A 仿真。把串口、Python 和标定文件路径换成自己的。
+主臂的 Python 环境需安装 LeRobot 和 Feetech SDK。串口也可以使用 `/dev/serial/by-id/` 下的设备路径。
+
+```bash
+.venv/bin/python real_keyboard.py --mode sim \
+  --leader-port /dev/ttyACM0 \
+  --leader-python /path/to/lerobot/.venv/bin/python \
+  --leader-calib "$HOME/.cache/huggingface/lerobot/calibration/teleoperators/so_leader/your_leader.json" \
+  --leader-mapping absolute --joint-speed 150
+```
+
+点击窗口后按住 Space，R1-7A 以限速追向 SO-101 当前角度对应的姿态，主臂可以先摆好再按键。
+松开 Space 或窗口失焦时保持 R1-7A 当前参考。纯仿真从零位起步，真机从反馈姿态开始。
+映射依次为肩旋转→J1、肩抬升→J2、肘弯曲→J4、腕弯曲→J6、腕旋转→J5。J3、J7 保持，
+主臂夹爪不驱动 R1-7A 的夹爪。默认绝对映射是按模型几何和关节行程给出的初值，
+例如 SO-101 肘角 −74° 对应 R1-7A J4 约 160° 的伸直姿态。两台机械臂的夹爪轨迹会随机构差异而不同。
+可通过 `--leader-map 路径.json` 更换两点参考。JSON 使用 `shoulder_pan`、`shoulder_lift`、
+`elbow_flex`、`wrist_flex`、`wrist_roll` 五个键，每个值格式为
+`[[主臂角1, 主臂角2], [从臂角1, 从臂角2]]`，单位为度。主臂角按升序排列，
+超出参考区间的角度按相应端点处理。
+纯仿真的目标变化速度由 `--joint-speed` 指定。绝对跟随在纯仿真使用默认电机配置时，
+参考滤波时间常数为 25 ms，可从 150°/s 开始试。目标最多领先反馈 5°，因此继续提高速度上限
+仍会受到仿真关节响应的限制。真机主臂遥操默认 5°/s，可用 `--joint-speed 10`
+提高跟随目标的速度，软件上限为 60°/s。两者均保留模型限位和间隙检查。
+
+省略 `--leader-mapping absolute` 会使用相对模式，以按下 Space 时的两臂姿态为参考。
+相对模式的默认比例为 0.35，单次跟随各轴最多偏移 12°。肘部默认反向跟随，纯仿真从 J4=45° 起步。
+可用 `--leader-signs 1 1 -1 -1 1` 指定方向，顺序为 J1、J2、J4、J6、J5，
+各值分别为同向 `1` 或反向 `-1`。`--leader-scale` 设置比例，纯仿真可用
+`--leader-travel-deg 45` 将单次跟随行程放大到 45°。
+
+在仿真确认方向后，可把 `--mode sim` 改成 `--mode sync --hardware --port /dev/ttyUSB0 --motor-config motor_config.real_tuned_all.json`，
+并把 `--joint-speed 150` 改成 `--joint-speed 10`。
+主臂串口和 R1-7A 串口必须不同。标定文件须与主臂电机中的标定匹配。
+
+无窗口自动往返、采集与关节反馈误差报告：见 [自动关节反馈测试](AUTO_JOINT_TEST.zh-CN.md)。
+无额外负载下的 J2/J4 有限积分与前馈试验配置、实测结果和限制：见 [真机调试记录](REAL_TUNING.zh-CN.md)。
+
 `real_keyboard.py` 复用仿真的按键，但只有显式添加 `--hardware` 才打开串口。
 默认桥接程序和标定文件均在本仓库 `r1-7a_sdk/` 内；不会自动选择旁边 SDK 的文件。
 `--calib` / `--calibration` 可以明确指定标定文件，`motor_config.json` 中的相对标定路径以配置文件所在目录为准。
@@ -266,13 +306,18 @@ python real_keyboard.py --mode sim --hardware --port /dev/ttyUSB3 \
 ```
 
 两个真机模式都先保持实测姿态并检查所有关节连续20周期处于 FOC，之后才接受运动输入。
+R 的完整回零路径检查在独立后台线程中执行，检查期间控制线程持续发送当前姿态保持指令；
+通过检查后才开始运动。规划期间 P/Tab 可取消，过期结果不会重新启动运动。
+规划期间实测姿态改变超过0.5°时拒绝执行，需先保持稳定后重新按 R。
 Tab 切换 IK / 关节模式，1–7 选择关节，上下键移动，Shift 微调。
-R 从当前姿态缓慢回到七关节零位；连接硬件时从实测关节角开始。默认峰值速度5°/秒、最大加速度10°/秒²，可用 `--home-speed-deg`、`--home-accel-deg` 调整（普通 `./run.sh` 也支持）。
+R 从当前姿态缓慢回到七关节零位；连接硬件时从实测关节角开始。默认峰值速度10°/秒、最大加速度20°/秒²，可用 `--home-speed-deg`、`--home-accel-deg` 调整（普通 `./run.sh` 也支持）。
 回零前检查模型关节限位和末端/臂体路径；直接路径不通时尝试J4=45°过渡点，仍不通则拒绝。这个检查不是完整环境避障规划。
 到位依据为七关节实测角均在±1°内且速度较低，连续20周期；轨迹结束5秒后仍未到位则提示未到零并继续保持目标。
 回零中 P 或 Tab 会取消轨迹并保持，恢复后不会自动继续回零。暂停时按 R 不启动，先按 P 恢复。
 P 冻结当前参考角并清零参考速度，恢复后不执行暂停前积累的旧目标。
 Space 不控制真机夹爪舵机。
+退出可在 MuJoCo 窗口按 Esc 或点关闭，也可在启动终端输入 `q` 后回车。
+窗口中的 Q 是末端上升键，不是退出键。退出和故障停止会中止回零，而不是继续运动到零位。
 
 发送指令的控制线程与 GLFW 渲染分开，模型状态通过快照显示。
 总线响应默认超时为0.1秒（`--feedback-timeout`），退出 FOC、报错、跟踪误差超过0.4 rad 或估算总力矩超限会停机；不会用补发突发指令追赶时间。

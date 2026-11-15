@@ -4,6 +4,7 @@ from pathlib import Path
 
 import numpy as np
 from sdk_protocol import SdkProtocol
+from position_bias import PositionBias
 
 
 def joint_vector(value, name, nonnegative=False):
@@ -23,6 +24,8 @@ class ArmMotorController:
         config = json.loads(path.read_text())
         expected = {'kp', 'kd', 'tau_limit', 'damping', 'frictionloss', 'armature', 'torque_time_constant_s'}
         optional = {'cartesian_reference_time_constant_s', 'gravity_feedforward_scale',
+                    'gravity_feedforward_joint_scale',
+                    'position_integral_ki', 'position_integral_limit_nm', 'position_integral_slew_nm_s',
                     'command_period_s', 'sdk_protocol_calibration', 'gripper_speed_rad_s',
                     'grasp_approach_clearance_m'}
         if not expected <= set(config) or set(config) - expected - optional:
@@ -57,11 +60,20 @@ class ArmMotorController:
         self.gravity_feedforward_scale = float(config.get('gravity_feedforward_scale', 0.))
         if not np.isfinite(self.gravity_feedforward_scale) or not 0 <= self.gravity_feedforward_scale <= 1:
             raise ValueError('gravity_feedforward_scale must be between 0 and 1')
+        self.gravity_feedforward_joint_scale = joint_vector(
+            config.get('gravity_feedforward_joint_scale', 1.), 'gravity_feedforward_joint_scale', True)
+        if np.any(self.gravity_feedforward_joint_scale > 1):
+            raise ValueError('gravity_feedforward_joint_scale must be between 0 and 1')
         self.default_kp = joint_vector(config['kp'], 'kp', True)
         self.default_kd = joint_vector(config['kd'], 'kd', True)
         self.tau_limit = joint_vector(config['tau_limit'], 'tau_limit', True)
         if np.any(self.tau_limit <= 0):
             raise ValueError('tau_limit must be positive')
+        self.position_bias = PositionBias(
+            joint_vector(config.get('position_integral_ki', 0.), 'position_integral_ki', True),
+            joint_vector(config.get('position_integral_limit_nm', 0.), 'position_integral_limit_nm', True),
+            joint_vector(config.get('position_integral_slew_nm_s', 0.), 'position_integral_slew_nm_s', True))
+        self.joint_limits = model.jnt_range[joints].copy()
         self.time_constant = float(config['torque_time_constant_s'])
         if not np.isfinite(self.time_constant) or self.time_constant < 0:
             raise ValueError('torque_time_constant_s must be finite and nonnegative')
@@ -78,9 +90,24 @@ class ArmMotorController:
         self.reset(np.zeros(7))
 
     def reset(self, q):
+        self.position_bias.reset()
         self.set_command(q, 0, 0, self.default_kp, self.default_kd)
         self.requested_tau = np.zeros(7)
         self.applied_tau = np.zeros(7)
+
+    def compensate_hold(self, command, measured_q, dt, integrate=True, unwind=False):
+        q, dq, tau, kp, kd = command
+        error = q - measured_q
+        unwind_mask = (np.abs(dq) > 1e-6) if unwind else np.zeros(7, dtype=bool)
+        if self.position_bias.enabled:
+            near_lower = measured_q < self.joint_limits[:, 0] + np.deg2rad(.5)
+            near_upper = measured_q > self.joint_limits[:, 1] - np.deg2rad(.5)
+            error = np.where((near_lower & (error < 0)) | (near_upper & (error > 0)), 0., error)
+            # Do not keep accumulating or holding an outward bias near a limit.
+            unwind_mask |= ((near_lower & (self.position_bias.bias < 0)) |
+                            (near_upper & (self.position_bias.bias > 0)))
+        bias = self.position_bias.update(error, dt, integrate=integrate, unwind=unwind_mask)
+        return q, dq, tau + bias, kp, kd
 
     def set_command(self, q, dq=0, tau=0, kp=None, kd=None):
         # Validate atomically so a rejected command leaves the previous one intact.

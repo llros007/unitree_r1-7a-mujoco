@@ -13,7 +13,7 @@ import numpy as np
 from environment import ArmEnvironment
 from real_keyboard import (Bus, Session, TRACK_ABORT_RAD, check_command, check_health,
                            command_from_env, handle_key, hold_command, make_controller,
-                           parse_args, parse_state, reanchor)
+                           parse_args, parse_state, reanchor, SDK_CALIB)
 
 
 class FakeBus:
@@ -36,7 +36,7 @@ class FakeBus:
 def args(mode='sim', hardware=False):
     return SimpleNamespace(mode=mode, hardware=hardware, joint_speed=20.,
                            bridge=Path('/unused'), calib=Path('/unused'),
-                           port='/unused', feedback_timeout=.04)
+                           port='/unused', feedback_timeout=.04, home_speed_deg=5., home_accel_deg=10.)
 
 
 class TeleopChecks(unittest.TestCase):
@@ -47,11 +47,90 @@ class TeleopChecks(unittest.TestCase):
     def setUp(self):
         self.env.reset()
 
+    def test_leader_starts_with_small_encoder_offset_below_joint_limit(self):
+        options = args('sync', hardware=True)
+        options.leader_scale = .7
+        options.joint_speed = 5.
+        session = Session(self.env, options)
+        bus = FakeBus(np.deg2rad([0, .5, 0, -.16, 0, 0, 0]))
+        reanchor(self.env, bus)
+        leader_angles = np.zeros(5)
+        session.leader = SimpleNamespace(sample=lambda: leader_angles.copy())
+        session.events.put((glfw.KEY_SPACE, glfw.PRESS, 0))
+        session.tick(bus)
+        self.assertIn(glfw.KEY_SPACE, session.control.keys)
+        self.assertEqual(self.env.q_command[3], self.env.limits[3, 0])
+        leader_angles[0] = np.deg2rad(10)
+        session.tick(bus)
+        self.assertGreater(self.env.q_command[0], 0)
+        self.assertLessEqual(self.env.q_command[0], np.deg2rad(.05) + 1e-9)
+        np.testing.assert_array_equal(self.env.q_command[[2, 6]], np.zeros(2))
+
+    def test_leader_elbow_flexion_maps_to_r1_j4_in_both_directions(self):
+        from so101_leader import joint_target
+
+        q = np.deg2rad([0, 0, 0, 45, 0, 0, 0])
+        show = FakeBus(q)
+        reanchor(self.env, show)
+        for sign in (-1, 1):
+            delta = np.deg2rad([0, 0, 10 * sign, 0, 0])
+            target = joint_target(self.env, q, delta, .7, np.deg2rad(20.))
+            self.assertIsNotNone(target)
+            self.assertGreater(-sign * (target[3] - q[3]), 0)
+            np.testing.assert_array_equal(target[[0, 1, 2, 4, 5, 6]], q[[0, 1, 2, 4, 5, 6]])
+
+    def test_leader_sim_pauses_when_ui_stalls(self):
+        options = args()
+        options.leader_scale = .7
+        session = Session(self.env, options)
+        session.leader = SimpleNamespace(sample=lambda: np.zeros(5))
+        session.events.put((glfw.KEY_SPACE, glfw.PRESS, 0))
+        session.input_at = time.monotonic() - 1.
+        session.tick(None)
+        self.assertTrue(self.env.paused)
+        self.assertIsNone(session.leader_anchor)
+        self.assertNotIn(glfw.KEY_SPACE, session.control.keys)
+
+    def test_absolute_leader_reaches_fixed_elbow_target_after_each_engagement(self):
+        from so101_leader import load_absolute_points
+
+        options = args()
+        options.joint_speed = 40.
+        options.leader_absolute_points = load_absolute_points()
+        session = Session(self.env, options)
+        angles = np.zeros(5)
+        session.leader = SimpleNamespace(sample=lambda: np.deg2rad(angles))
+
+        def tick(count=1):
+            for _ in range(count):
+                session.input_at = time.monotonic()
+                session.tick(None)
+
+        session.events.put((glfw.KEY_SPACE, glfw.PRESS, 0))
+        tick()
+        self.assertGreater(self.env.q_command[3], 0)
+        self.assertLessEqual(np.rad2deg(self.env.q_command[3]), .4 + 1e-9)
+        tick(350)
+        self.assertAlmostEqual(np.rad2deg(self.env.q_command[3]), 86)
+        session.events.put((glfw.KEY_SPACE, glfw.RELEASE, 0))
+        angles[2] = -74
+        tick(20)
+        self.assertAlmostEqual(np.rad2deg(self.env.q_command[3]), 86, places=3)
+        session.events.put((glfw.KEY_SPACE, glfw.PRESS, 0))
+        tick(350)
+        np.testing.assert_allclose(np.rad2deg(self.env.data.qpos[self.env.qids]),
+                                   [0, 90, 0, 160, 0, 0, 0], atol=.1)
+        angles[3:] = 20
+        tick(100)
+        wrist = np.rad2deg(self.env.data.qpos[self.env.qids[[4, 5]]])
+        np.testing.assert_allclose(wrist, [10, -20 * 30 / 95], atol=.1)
+        np.testing.assert_array_equal(self.env.q_command[[2, 6]], [0, 0])
+
     def test_no_implicit_hardware(self):
         with patch('real_keyboard.os.path.exists', return_value=True):
             parsed = parse_args(['--mode', 'sim'])
         self.assertFalse(parsed.hardware)
-        self.assertTrue(str(parsed.calib).endswith('sim_r1-7a/r1-7a_sdk/config/joint_calib.txt'))
+        self.assertEqual(parsed.calib, SDK_CALIB.resolve())
 
     def test_reset_and_tab_rebase_on_hardware_in_both_modes(self):
         for mode in ('sim', 'sync'):
@@ -63,6 +142,13 @@ class TeleopChecks(unittest.TestCase):
                 session.events.put((key, glfw.PRESS, 0))
                 session.tick(bus)
                 if key == glfw.KEY_R:
+                    # Planning is asynchronous: first command holds measured pose.
+                    np.testing.assert_allclose(bus.sent[-1][0], q, atol=1e-9)
+                    deadline = time.monotonic() + 2.
+                    while session.home_results.empty() and time.monotonic() < deadline:
+                        time.sleep(.001)
+                    session.input_at = time.monotonic()
+                    session.tick(bus)
                     self.assertLess(np.max(np.abs(bus.sent[-1][0]-q)), np.deg2rad(.05))
                     self.assertLessEqual(np.max(np.abs(bus.sent[-1][1])), np.deg2rad(5))
                     self.assertLess(bus.sent[-1][0][3], q[3])
@@ -199,6 +285,59 @@ class TeleopChecks(unittest.TestCase):
         self.assertTrue(bus.stopped)
         self.assertEqual(bus.sent, [])
 
+    def test_enable_timeout_identifies_non_foc_joint(self):
+        bus = FakeBus()
+        bus.mode[2] = 0
+        session = Session(self.env, args(hardware=True))
+        reanchor(self.env, bus)
+        clock = [0.]
+        original = bus.send
+
+        def send(*command):
+            original(*command)
+            clock[0] += .1
+
+        bus.send = send
+        with patch('real_keyboard.time.monotonic', side_effect=lambda: clock[0]), \
+                patch.object(session.stop_event, 'wait', return_value=False):
+            with self.assertRaisesRegex(RuntimeError, r'J3\(mode=0,非FOC=20次\)') as caught:
+                session.enable(bus)
+        self.assertIn('最长连续FOC=0', str(caught.exception))
+        self.assertIn('最大总线往返=100.0ms', str(caught.exception))
+
+    def test_slow_control_cycle_reports_stage_and_stops(self):
+        bus = FakeBus()
+        session = Session(self.env, args(hardware=True))
+        original = bus.send
+
+        def send(*command):
+            original(*command)
+            if len(bus.sent) > 20:
+                time.sleep(.13)
+
+        bus.send = send
+        with patch('real_keyboard.Bus', return_value=bus):
+            session.run()
+        self.assertIn('控制循环延迟超过100ms', session.error)
+        self.assertIn('bus_roundtrip_ms=', session.error)
+        self.assertTrue(bus.stopped)
+        self.assertEqual(len(bus.sent), 21)
+
+    def test_overdue_reference_does_not_send_a_motion_command(self):
+        bus = FakeBus()
+        session = Session(self.env, args('sync', hardware=True))
+        clock = [time.monotonic()]
+
+        def slow_reference(env):
+            clock[0] += .134
+            return command_from_env(env)
+
+        with patch('real_keyboard.time.monotonic', side_effect=lambda: clock[0]), \
+                patch('real_keyboard.command_from_env', side_effect=slow_reference):
+            with self.assertRaisesRegex(TimeoutError, 'reference_and_checks_ms=134'):
+                session.tick(bus, deadline=clock[0] + .02)
+        self.assertEqual(bus.sent, [])
+
     def test_calibration_stays_with_config_despite_sibling(self):
         with tempfile.TemporaryDirectory() as tmp:
             import json, shutil
@@ -235,6 +374,36 @@ class TeleopChecks(unittest.TestCase):
             finally:
                 bus.stop()
             self.assertIsNotNone(bus.proc.poll())
+
+    def test_feedback_info_rejects_stale_or_hot_motors(self):
+        bus = FakeBus()
+        bus.info = dict(age_s=[.002]*7, driver_temperature_c=[25]*7, winding_temperature_c=[26]*7)
+        check_health(bus)
+        bus.info['age_s'][3] = .101
+        with self.assertRaisesRegex(RuntimeError, 'older than 100ms'):
+            check_health(bus)
+        bus.info['age_s'][3] = .002
+        bus.info['driver_temperature_c'][1] = 61
+        with self.assertRaisesRegex(RuntimeError, 'temperature'):
+            check_health(bus)
+
+    def test_info_line_is_consumed_before_state(self):
+        import json
+        with tempfile.TemporaryDirectory() as tmp:
+            bridge = Path(tmp)/'fake-info-bridge'
+            info = dict(packets=[1]*7, age_s=[.002]*7, driver_temperature_c=[25]*7,
+                        winding_temperature_c=[26]*7, voltage_v=[48]*7)
+            bridge.write_text('#!/usr/bin/env python3\nimport sys\n'
+                + 'print(' + repr('INFO '+json.dumps(info)) + ', flush=True)\n'
+                + 'print("STATE " + " ".join(["0"]*21+["1"]*7+["0"]*7), flush=True)\n'
+                + 'for line in sys.stdin:\n if line.strip()=="STOP": break\n')
+            bridge.chmod(0o755)
+            bus = Bus(bridge, '/unused', '/unused')
+            try:
+                self.assertEqual(bus.info, info)
+                check_health(bus)
+            finally:
+                bus.stop()
 
 
 if __name__ == '__main__':

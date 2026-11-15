@@ -12,6 +12,12 @@ from end_effector_collision import CLEARANCE_Q, ToolArmClearance
 ROOT = Path(__file__).resolve().parent
 
 
+def tcp_pose_at(env, data, q):
+    data.qpos[env.qids] = q
+    mujoco.mj_kinematics(env.model, data)
+    return data.site_xpos[env.tcp_id].copy(), data.site_xmat[env.tcp_id].reshape(3, 3).copy()
+
+
 class ArmEnvironment:
     def __init__(self, motor_config=None, scene_path=None, object_kind='plant',
                  end_effector_config=None, include_camera=True, initial_pose='observation', calibration_path=None):
@@ -284,15 +290,21 @@ class ArmEnvironment:
         self._command_countdown = 0
         self.update_marker()
 
-    def start_zero_return(self, speed_deg=5., accel_deg=10.):
+    def start_zero_return(self, speed_deg=10., accel_deg=20.):
         """Plan checked, synchronized cosine segments without changing measured qpos."""
         if self.paused:
             return 'Paused: press P before returning to zero'
         if self.zero_return is not None:
             return 'Returning to zero'
+        plan = self.plan_zero_return(self.data.qpos[self.qids].copy(), speed_deg, accel_deg)
+        if isinstance(plan, str):
+            return plan
+        return self.begin_zero_return(plan, speed_deg, accel_deg)
+
+    def plan_zero_return(self, measured, speed_deg=10., accel_deg=20.):
+        """Check a path using this instance's scratch data, without changing control state."""
         if not np.isfinite([speed_deg, accel_deg]).all() or min(speed_deg, accel_deg) <= 0:
             raise ValueError('Zero-return speed and acceleration must be finite and positive')
-        measured = self.data.qpos[self.qids].copy()
         start = np.clip(measured, self.limits[:, 0], self.limits[:, 1])
         if np.max(np.abs(start - measured)) > np.deg2rad(.02):
             return 'Blocked: measured pose outside joint limits; verify calibration'
@@ -314,10 +326,14 @@ class ArmEnvironment:
                                np.pi * np.sqrt(delta / (2 * np.deg2rad(accel_deg))))
                 segments.append((previous.copy(), destination.copy(), duration))
             previous = destination
+        return dict(start=start.copy(), segments=segments, index=0, elapsed=0., settling=0., stable=0)
+
+    def begin_zero_return(self, plan, speed_deg=10., accel_deg=20.):
+        start, segments = plan['start'], plan['segments']
         self.use_cartesian_control()
         self.q_command = start.copy()
         self.reference.reset(start)
-        self.zero_return = dict(segments=segments, index=0, elapsed=0., settling=0., stable=0)
+        self.zero_return = plan
         self.cartesian_control = False
         print(f'缓慢回零：峰值 {speed_deg:g} 度/秒，加速度不超过 {accel_deg:g} 度/秒²，'
               f'轨迹约 {sum(s[2] for s in segments):.2f} 秒；P/Tab可取消并保持', flush=True)
@@ -375,7 +391,7 @@ class ArmEnvironment:
         return status
 
     def gravity_feedforward(self, q):
-        return (self.motors.gravity_feedforward_scale * self.gravity_torque(q)
+        return (self.motors.gravity_feedforward_scale * self.motors.gravity_feedforward_joint_scale * self.gravity_torque(q)
                 if self.motors.gravity_feedforward_scale else np.zeros(7))
 
     def gravity_torque(self, q):
@@ -403,8 +419,7 @@ class ArmEnvironment:
             self.data.ctrl[self.gripper_actuator] = self.gripper_command
             if self.cartesian_control and self._command_countdown == 0:
                 q, dq = self.reference.update(self.q_command, self.motors.command_period)
-                gravity_tau = (self.motors.gravity_feedforward_scale * self.gravity_torque(q)
-                               if self.motors.gravity_feedforward_scale else 0.)
+                gravity_tau = self.gravity_feedforward(q)
                 self.motors.set_command(q, dq, tau=gravity_tau)
                 self._command_countdown = self.motors.command_ticks
             # Firmware-like inner PD runs at physics rate, holding the outer target.

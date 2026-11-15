@@ -1,0 +1,99 @@
+{
+  "kp": [
+    60,
+    60,
+    60,
+    60,
+    60,
+    60,
+    60
+  ],
+  "kd": [
+    6,
+    6,
+    4,
+    4,
+    2,
+    2,
+    1.5
+  ],
+  "tau_limit": [
+    60,
+    60,
+    33,
+    33,
+    33,
+    10,
+    10
+  ],
+  "damping": [
+    0.1,
+    0.1,
+    0.1,
+    0.1,
+    0.1,
+    0.1,
+    0.1
+  ],
+  "frictionloss": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+  ],
+  "armature": [
+    0.015,
+    0.015,
+    0.015,
+    0.015,
+    0.015,
+    0.015,
+    0.015
+  ],
+  "torque_time_constant_s": 0.0,
+  "cartesian_reference_time_constant_s": 0.0625,
+  "gravity_feedforward_scale": 1.0,
+  "command_period_s": 0.02,
+  "sdk_protocol_calibration": "r1-7a_sdk/config/joint_calib.txt",
+  "gripper_speed_rad_s": 0.3,
+  "grasp_approach_clearance_m": 0.006,
+  "position_integral_ki": [
+    0,
+    20,
+    0,
+    15,
+    0,
+    15,
+    0
+  ],
+  "position_integral_limit_nm": [
+    0,
+    2,
+    0,
+    1.2,
+    0,
+    1.2,
+    0
+  ],
+  "position_integral_slew_nm_s": [
+    0,
+    0.3,
+    0,
+    0.2,
+    0,
+    0.2,
+    0
+  ],
+  "gravity_feedforward_joint_scale": [
+    1,
+    1,
+    1,
+    0.9,
+    1,
+    1,
+    1
+  ]
+}
