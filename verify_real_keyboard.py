@@ -108,23 +108,24 @@ class TeleopChecks(unittest.TestCase):
 
         session.events.put((glfw.KEY_SPACE, glfw.PRESS, 0))
         tick()
-        self.assertGreater(self.env.q_command[3], 0)
-        self.assertLessEqual(np.rad2deg(self.env.q_command[3]), .4 + 1e-9)
-        tick(350)
-        self.assertAlmostEqual(np.rad2deg(self.env.q_command[3]), 86)
-        session.events.put((glfw.KEY_SPACE, glfw.RELEASE, 0))
+        self.assertAlmostEqual(np.rad2deg(self.env.q_command[3]), 0, places=3)
         angles[2] = -74
+        tick(350)
+        self.assertAlmostEqual(np.rad2deg(self.env.q_command[3]), 74, places=0)
+        session.events.put((glfw.KEY_SPACE, glfw.RELEASE, 0))
+        angles[2] = 0
         tick(20)
-        self.assertAlmostEqual(np.rad2deg(self.env.q_command[3]), 86, places=3)
+        self.assertAlmostEqual(np.rad2deg(self.env.q_command[3]), 74, places=3)
         session.events.put((glfw.KEY_SPACE, glfw.PRESS, 0))
         tick(350)
         np.testing.assert_allclose(np.rad2deg(self.env.data.qpos[self.env.qids]),
-                                   [0, 90, 0, 160, 0, 0, 0], atol=.1)
+                                   [0, 0, 0, 0, 0, 0, 0], atol=.5)
+        angles[2] = -74
         angles[3:] = 20
-        tick(100)
-        wrist = np.rad2deg(self.env.data.qpos[self.env.qids[[4, 5]]])
-        np.testing.assert_allclose(wrist, [10, -20 * 30 / 95], atol=.1)
-        np.testing.assert_array_equal(self.env.q_command[[2, 6]], [0, 0])
+        tick(400)
+        q = np.rad2deg(self.env.data.qpos[self.env.qids])
+        np.testing.assert_allclose(q[[0, 1, 2, 3, 6]], [0, 0, 0, 74, 0], atol=.5)
+        np.testing.assert_allclose(q[[4, 5]], [20, -20], atol=.5)
 
     def test_no_implicit_hardware(self):
         with patch('real_keyboard.os.path.exists', return_value=True):

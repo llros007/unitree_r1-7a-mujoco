@@ -29,7 +29,8 @@ import numpy as np
 from environment import ArmEnvironment, tcp_pose_at
 from main import HELP as SIM_HELP, KeyboardViewer
 from so101_leader import (DEFAULT_SIGNS, DEFAULT_TRAVEL_DEG, LeaderReader, absolute_joint_target,
-                          joint_target, load_absolute_points)
+                          apply_calibrated_ranges, gripper_sides_deg, gripper_target, joint_target,
+                          load_absolute_points)
 from xle_gripper import CLOSE_ANGLE, OPEN_ANGLE
 
 ROOT = Path(__file__).resolve().parent
@@ -58,7 +59,10 @@ Space：只控制仿真夹爪/显示标记，不驱动真机夹爪舵机。
 退出或故障会停驱动，机械臂可能失去主动支撑。
 退出：MuJoCo窗口按Esc或点关闭；终端输入q后回车也可退出。
 """
-LEADER_HELP = 'SO-101 主臂：点击窗口，按住 Space 跟随，松开保持；P 暂停，Esc 退出。'
+LEADER_HELP = ('SO-101 主臂：点击窗口，按住 Space 跟随，松开保持；P 暂停，Esc 退出。\n'
+               'B 开始或结束记录仿真动作，N 让仿真重复刚才的记录。\n'
+               'C：盆栽掉下去后放回原来的位置，机械臂保持不动。')
+TEACH_PATH = ROOT / 'outputs' / 'sim_teach.json'
 
 
 def parse_state(line):
@@ -258,7 +262,13 @@ class Session:
         self.home_results = queue.Queue()
         self.last_compensation_at = None
         self.leader = None
+        self.gripper_sides = (-50., 50.)
         self.leader_anchor = None
+        self.teach_samples = []
+        self.teach_grippers = []
+        self.teach_recording = False
+        self.teach_replay = None
+        self.teach_index = 0
         self.input_at = time.monotonic()
         self.thread = threading.Thread(target=self.run, name='r1-control', daemon=True)
 
@@ -306,6 +316,88 @@ class Session:
         e.target_position, e.target_rotation = tcp_pose_at(e, e.ik_data, target)
         e.update_marker()
         c.joint_status = 'Absolute follow' if absolute_points is not None else 'Following SO-101'
+
+    def follow_leader_gripper(self):
+        if self.leader is None or self.teach_replay is not None:
+            return
+        degrees = getattr(self.leader, 'gripper_deg', None)
+        if degrees is None:
+            return
+        goal = gripper_target(degrees, OPEN_ANGLE, CLOSE_ANGLE, *self.gripper_sides)
+        self.env.gripper_goal = goal
+        self.env.gripper_open = goal > (OPEN_ANGLE + CLOSE_ANGLE) / 2
+
+    def toggle_teach_record(self):
+        if self.teach_replay is not None:
+            return
+        self.teach_recording = not self.teach_recording
+        if self.teach_recording:
+            self.teach_samples = []
+            self.teach_grippers = []
+            self.control.joint_status = '记录中：按住 Space 带动仿真'
+            print('开始记录仿真动作', flush=True)
+            return
+        if len(self.teach_samples) < 2:
+            self.teach_samples = []
+            self.teach_grippers = []
+            self.control.joint_status = '记录太短'
+            print('记录太短，没有保存', flush=True)
+            return
+        TEACH_PATH.parent.mkdir(parents=True, exist_ok=True)
+        payload = {'joints': [f'J{i}' for i in range(1, 8)],
+                   'dt_s': self.env.motors.command_period,
+                   'q_rad': [row.tolist() for row in self.teach_samples],
+                   'gripper_rad': self.teach_grippers}
+        TEACH_PATH.write_text(json.dumps(payload), encoding='utf-8')
+        self.control.joint_status = f'已保存 {len(self.teach_samples)} 帧，按 N 回放'
+        print(f'仿真动作已保存：{TEACH_PATH}', flush=True)
+
+    def start_teach_replay(self):
+        if self.teach_recording:
+            return
+        if len(self.teach_samples) < 2 and TEACH_PATH.is_file():
+            payload = json.loads(TEACH_PATH.read_text(encoding='utf-8'))
+            self.teach_samples = [np.asarray(row, dtype=float) for row in payload['q_rad']]
+            self.teach_grippers = [None if value is None else float(value)
+                                   for value in payload.get('gripper_rad', [])]
+        if len(self.teach_samples) < 2:
+            self.control.joint_status = '还没有记录，先按 B'
+            print('还没有可回放的仿真动作', flush=True)
+            return
+        self.teach_replay = self.teach_samples
+        self.teach_index = 0
+        self.control.keys.discard(glfw.KEY_SPACE)
+        self.release_leader()
+        self.control.joint_status = '回放记录'
+        print(f'开始回放 {len(self.teach_replay)} 帧', flush=True)
+
+    def advance_teach_replay(self):
+        e = self.env
+        if self.teach_index >= len(self.teach_replay):
+            self.teach_replay = None
+            self.control.joint_status = '回放结束，按住 Space 继续跟随'
+            print('回放结束', flush=True)
+            return
+        target = np.clip(self.teach_replay[self.teach_index], e.limits[:, 0], e.limits[:, 1])
+        if self.teach_index < len(self.teach_grippers) and self.teach_grippers[self.teach_index] is not None:
+            e.gripper_goal = self.teach_grippers[self.teach_index]
+            e.gripper_open = e.gripper_goal > (OPEN_ANGLE + CLOSE_ANGLE) / 2
+        self.teach_index += 1
+        e.q_command = target
+        e.target_position, e.target_rotation = tcp_pose_at(e, e.ik_data, target)
+        e.update_marker()
+        self.control.joint_status = f'回放 {self.teach_index}/{len(self.teach_replay)}'
+
+    def restore_object(self):
+        e = self.env
+        joint = e.model.joint('cube_free')
+        qadr = int(e.cube_q)
+        dadr = int(e.model.jnt_dofadr[joint.id])
+        e.data.qpos[qadr:qadr + 7] = e.model.qpos0[qadr:qadr + 7]
+        e.data.qvel[dadr:dadr + 6] = 0
+        mujoco.mj_forward(e.model, e.data)
+        self.control.joint_status = '盆栽已放回原位'
+        print('盆栽已放回原位', flush=True)
 
     def cancel_home_planning(self):
         self.home_generation += 1
@@ -398,6 +490,17 @@ class Session:
                 key, action, mods = self.events.get_nowait()
             except queue.Empty:
                 break
+            if (self.leader is not None and bus is None and action == glfw.PRESS
+                    and key == glfw.KEY_B):
+                self.toggle_teach_record()
+                continue
+            if (self.leader is not None and bus is None and action == glfw.PRESS
+                    and key == glfw.KEY_N):
+                self.start_teach_replay()
+                continue
+            if action == glfw.PRESS and key == glfw.KEY_C and bus is None:
+                self.restore_object()
+                continue
             if self.leader is not None and key == glfw.KEY_SPACE:
                 if action == glfw.PRESS and not e.paused:
                     c.keys.add(key)
@@ -431,10 +534,20 @@ class Session:
                 e.paused = True
                 print('窗口超过0.5秒未处理输入，已暂停保持；窗口恢复后按 P 继续', flush=True)
         if self.leader is not None:
+            self.follow_leader_gripper()
+        if self.teach_replay is not None and not e.paused:
+            leader_started = time.monotonic()
+            self.advance_teach_replay()
+            self.tick_timings['leader_update_ms'] = 1000 * (time.monotonic() - leader_started)
+        elif self.leader is not None:
             leader_started = time.monotonic()
             self.update_leader(not e.paused)
             if e.paused or glfw.KEY_SPACE not in c.keys:
                 self.release_leader()
+            if self.teach_recording and not e.paused:
+                self.teach_samples.append(np.asarray(e.q_command, dtype=float).copy())
+                self.teach_grippers.append(getattr(e, 'gripper_goal', None))
+                c.joint_status = f'记录中 {len(self.teach_samples)}'
             self.tick_timings['leader_update_ms'] = 1000 * (time.monotonic() - leader_started)
         elif not self.home_pending:
             c.controls(e.motors.command_period)
@@ -483,6 +596,7 @@ class Session:
         bus = None
         try:
             if getattr(self.args, 'leader_port', None):
+                self.gripper_sides = gripper_sides_deg(self.args.leader_calib)
                 self.leader = LeaderReader(self.args.leader_python, self.args.leader_port, self.args.leader_calib)
                 deadline = time.monotonic() + 15.
                 while self.leader.sample() is None:
@@ -597,7 +711,9 @@ class RealKeyboardViewer(KeyboardViewer):
         super().__init__(env)
         if getattr(session.args, 'leader_port', None):
             self.control_help = ('SO-101 LEADER\nHold SPACE: follow | Release: hold\n'
-                                 'P: pause/resume | ESC: exit\nMouse: left orbit | right pan | wheel zoom')
+                                 'B: record/stop | N: replay | C: restore plant\n'
+                                 'P: pause | ESC: exit\n'
+                                 'Mouse: left orbit | right pan | wheel zoom')
 
     def on_key(self, window, key, scancode, action, mods):
         if key == glfw.KEY_ESCAPE and action == glfw.PRESS:
@@ -738,6 +854,9 @@ def parse_args(argv=None):
         if not 0 < args.leader_scale <= 1 or not args.leader_calib.expanduser().is_file():
             parser.error('主臂比例必须大于 0 且不超过 1，并提供有效标定文件')
         args.leader_calib = args.leader_calib.expanduser().resolve()
+        if args.leader_absolute_points is not None and args.leader_map is None:
+            args.leader_absolute_points = apply_calibrated_ranges(
+                args.leader_absolute_points, args.leader_calib)
         if not os.path.exists(args.leader_port):
             parser.error(f'主臂串口不存在：{args.leader_port}')
         if args.hardware and os.path.exists(args.port) and os.path.samefile(args.leader_port, args.port):

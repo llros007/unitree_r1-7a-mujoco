@@ -43,6 +43,20 @@ R1-7A + XLeRobot SO101 TPU95A MuJoCo 键盘抓取环境
 """
 
 
+def _detach_windows_ime(window):
+    """Keep a Windows IME from swallowing letter keys and popping its candidate box."""
+    if sys.platform != 'win32':
+        return
+    try:
+        import ctypes
+        imm32 = ctypes.WinDLL('imm32')
+        imm32.ImmAssociateContext.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        imm32.ImmAssociateContext.restype = ctypes.c_void_p
+        imm32.ImmAssociateContext(glfw.get_win32_window(window), None)
+    except (AttributeError, OSError):
+        pass
+
+
 class KeyboardViewer:
     reset_label = 'slow zero'
     home_speed_deg = 10.
@@ -72,6 +86,7 @@ class KeyboardViewer:
             raise RuntimeError('无法创建 OpenGL 窗口，请检查 DISPLAY 和显卡驱动')
         glfw.make_context_current(self.window)
         glfw.swap_interval(1)
+        _detach_windows_ime(self.window)
         self.camera = mujoco.MjvCamera()
         self.camera.lookat[:] = [0., 0.16, 0.76]
         self.camera.distance = 1.35

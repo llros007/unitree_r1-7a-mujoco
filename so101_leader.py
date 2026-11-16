@@ -16,15 +16,21 @@ DEFAULT_SIGNS = (1, 1, -1, -1, 1)
 HELD_AXES = np.setdiff1d(np.arange(7), R1_AXES)
 DEFAULT_TRAVEL_DEG = 12.
 MAX_LEAD_RAD = np.deg2rad(5)
+# Present position after homing. The pose held at the first Enter is this count.
+ENCODER_CENTER = 2048
+ENCODER_SPAN = 4095
+# Leader gripper degrees around that zero pose. Negative closes the sim jaw.
+GRIPPER_HALF_DEG = 50.
 STALE_SECONDS = .25
-# Two angle references per axis. The elbow's straight references are
-# approximated from the shoulder-to-elbow and elbow-to-wrist model geometry.
+# Leader degrees map onto the same sim joint degrees. Elbow and wrist flex
+# are reversed: positive SO-101 flexion folds, positive R1 J4/J6 opens.
+# Joint limits clip values the R1 cannot reach.
 ABSOLUTE_POINTS_DEG = {
-    'shoulder_pan': ((-105, 105), (-105, 105)),
-    'shoulder_lift': ((-90, 90), (0, 180)),
-    'elbow_flex': ((-74, 86), (160, 0)),
-    'wrist_flex': ((-95, 95), (30, -30)),
-    'wrist_roll': ((-180, 180), (-90, 90)),
+    'shoulder_pan': ((-180, 180), (-180, 180)),
+    'shoulder_lift': ((-180, 180), (-180, 180)),
+    'elbow_flex': ((-180, 180), (180, -180)),
+    'wrist_flex': ((-180, 180), (180, -180)),
+    'wrist_roll': ((-180, 180), (-180, 180)),
 }
 
 
@@ -58,8 +64,10 @@ def stream_angles(port, calibration_file):
         for name in MOTORS:
             bus.write('Torque_Enable', name, 0)
         while True:
-            angles = bus.sync_read('Present_Position', num_retry=2)
-            print(json.dumps([float(angles[name]) for name in MOTORS[:5]]), flush=True)
+            raw = bus.sync_read('Present_Position', normalize=False, num_retry=2)
+            # Degrees from the homing pose, not from the midpoint of the swept range.
+            degrees = [(float(raw[name]) - ENCODER_CENTER) * 360 / ENCODER_SPAN for name in MOTORS]
+            print(json.dumps(degrees), flush=True)
             time.sleep(.02)
     finally:
         if bus.is_connected:
@@ -71,6 +79,7 @@ class LeaderReader:
         self.process = subprocess.Popen([python, '-u', str(Path(__file__).resolve()), port, str(calibration)],
                                         stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, text=True)
         self.latest = None
+        self.gripper_deg = None
         self.thread = threading.Thread(target=self._read, daemon=True, name='so101-feedback')
         self.thread.start()
 
@@ -78,6 +87,9 @@ class LeaderReader:
         for line in self.process.stdout:
             try:
                 q = np.asarray(json.loads(line), dtype=float)
+                if q.shape == (6,) and np.isfinite(q).all():
+                    self.gripper_deg = float(q[5])
+                    q = q[:5]
                 if q.shape == (5,) and np.isfinite(q).all():
                     self.latest = time.monotonic(), np.deg2rad(q)
             except (ValueError, TypeError):
@@ -107,6 +119,44 @@ def joint_target(env, base, leader_delta, scale, speed_rad_s, signs=DEFAULT_SIGN
     travel = np.deg2rad(travel_deg)
     requested[R1_AXES] += np.clip(scale * np.asarray(signs) * leader_delta, -travel, travel)
     return guard_joint_target(env, requested, speed_rad_s)
+
+
+def _travel_deg(item):
+    low = (int(item['range_min']) - ENCODER_CENTER) * 360 / ENCODER_SPAN
+    high = (int(item['range_max']) - ENCODER_CENTER) * 360 / ENCODER_SPAN
+    return low, high
+
+
+def apply_calibrated_ranges(points, calibration_file):
+    """Map recorded motor travel onto the sim joints that were stuck at a stop."""
+    entries = json.loads(Path(calibration_file).read_text())
+    mapped = np.array(points, copy=True)
+    # Motor 2: shoulder lift uses the whole sim J2 range.
+    low, high = _travel_deg(entries['shoulder_lift'])
+    if high > low:
+        mapped[1, 0] = np.deg2rad([low, high])
+        mapped[1, 1] = (0., 3.1416)
+    # Motor 3: positive elbow flexion folds, so the high end of the recording closes J4.
+    low, high = _travel_deg(entries['elbow_flex'])
+    if high > low:
+        mapped[2, 0] = np.deg2rad([low, high])
+        mapped[2, 1] = (3.1415, 0.)
+    return mapped
+
+
+def gripper_sides_deg(calibration_file):
+    """Leader degrees at the recorded gripper ends. The low count is closed."""
+    gripper = json.loads(Path(calibration_file).read_text())['gripper']
+    low, high = _travel_deg(gripper)
+    if high - low < 2:
+        return -GRIPPER_HALF_DEG, GRIPPER_HALF_DEG
+    return low, high
+
+
+def gripper_target(gripper_deg, open_angle, close_angle, low_deg=-GRIPPER_HALF_DEG, high_deg=GRIPPER_HALF_DEG):
+    """Map the recorded gripper travel onto the sim jaw. The low count is closed."""
+    opened = np.clip((float(gripper_deg) - float(low_deg)) / max(float(high_deg) - float(low_deg), 1.), 0, 1)
+    return float(close_angle + opened * (open_angle - close_angle))
 
 
 def absolute_joint_target(env, base, angles, points, speed_rad_s):

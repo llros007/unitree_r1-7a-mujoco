@@ -408,10 +408,14 @@ class ArmEnvironment:
             raise ValueError('duration must be finite and positive')
         # IK is solved only when move_target() changes the desired pose.
         # Re-solving a fixed pose can move a redundant arm after key release.
-        gripper_target = OPEN_ANGLE if self.gripper_open else CLOSE_ANGLE
+        gripper_goal = getattr(self, 'gripper_goal', None)
+        if gripper_goal is None:
+            gripper_target = OPEN_ANGLE if self.gripper_open else CLOSE_ANGLE
+        else:
+            gripper_target = gripper_goal
         gripper_speed = getattr(self, 'gripper_speed', None)
         for _ in range(max(1, round(duration / self.model.opt.timestep))):
-            if gripper_speed is None:
+            if gripper_goal is not None or gripper_speed is None:
                 self.gripper_command = gripper_target
             else:
                 increment = gripper_speed * self.model.opt.timestep
