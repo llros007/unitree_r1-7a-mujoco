@@ -16,21 +16,19 @@ DEFAULT_SIGNS = (1, 1, -1, -1, 1)
 HELD_AXES = np.setdiff1d(np.arange(7), R1_AXES)
 DEFAULT_TRAVEL_DEG = 12.
 MAX_LEAD_RAD = np.deg2rad(5)
-# Present position after homing. The pose held at the first Enter is this count.
+# Gripper encoder count at the recorded middle pose. The low end of its range is closed.
 ENCODER_CENTER = 2048
 ENCODER_SPAN = 4095
-# Leader gripper degrees around that zero pose. Negative closes the sim jaw.
 GRIPPER_HALF_DEG = 50.
 STALE_SECONDS = .25
-# Leader degrees map onto the same sim joint degrees. Elbow and wrist flex
-# are reversed: positive SO-101 flexion folds, positive R1 J4/J6 opens.
-# Joint limits clip values the R1 cannot reach.
+# Two angle references per axis. The elbow's straight references are
+# approximated from the shoulder-to-elbow and elbow-to-wrist model geometry.
 ABSOLUTE_POINTS_DEG = {
-    'shoulder_pan': ((-180, 180), (-180, 180)),
-    'shoulder_lift': ((-180, 180), (-180, 180)),
-    'elbow_flex': ((-180, 180), (180, -180)),
-    'wrist_flex': ((-180, 180), (180, -180)),
-    'wrist_roll': ((-180, 180), (-180, 180)),
+    'shoulder_pan': ((-105, 105), (-105, 105)),
+    'shoulder_lift': ((-90, 90), (0, 180)),
+    'elbow_flex': ((-74, 86), (160, 0)),
+    'wrist_flex': ((-95, 95), (30, -30)),
+    'wrist_roll': ((-180, 180), (-90, 90)),
 }
 
 
@@ -65,8 +63,12 @@ def stream_angles(port, calibration_file):
             bus.write('Torque_Enable', name, 0)
         while True:
             raw = bus.sync_read('Present_Position', normalize=False, num_retry=2)
-            # Degrees from the homing pose, not from the midpoint of the swept range.
-            degrees = [(float(raw[name]) - ENCODER_CENTER) * 360 / ENCODER_SPAN for name in MOTORS]
+            degrees = []
+            for name in MOTORS[:5]:
+                item = entries[name]
+                mid = (int(item['range_min']) + int(item['range_max'])) / 2
+                degrees.append((float(raw[name]) - mid) * 360 / ENCODER_SPAN)
+            degrees.append((float(raw['gripper']) - ENCODER_CENTER) * 360 / ENCODER_SPAN)
             print(json.dumps(degrees), flush=True)
             time.sleep(.02)
     finally:
@@ -125,23 +127,6 @@ def _travel_deg(item):
     low = (int(item['range_min']) - ENCODER_CENTER) * 360 / ENCODER_SPAN
     high = (int(item['range_max']) - ENCODER_CENTER) * 360 / ENCODER_SPAN
     return low, high
-
-
-def apply_calibrated_ranges(points, calibration_file):
-    """Map recorded motor travel onto the sim joints that were stuck at a stop."""
-    entries = json.loads(Path(calibration_file).read_text())
-    mapped = np.array(points, copy=True)
-    # Motor 2: shoulder lift uses the whole sim J2 range.
-    low, high = _travel_deg(entries['shoulder_lift'])
-    if high > low:
-        mapped[1, 0] = np.deg2rad([low, high])
-        mapped[1, 1] = (0., 3.1416)
-    # Motor 3: positive elbow flexion folds, so the high end of the recording closes J4.
-    low, high = _travel_deg(entries['elbow_flex'])
-    if high > low:
-        mapped[2, 0] = np.deg2rad([low, high])
-        mapped[2, 1] = (3.1415, 0.)
-    return mapped
 
 
 def gripper_sides_deg(calibration_file):
