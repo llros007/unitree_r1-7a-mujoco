@@ -15,7 +15,7 @@ SCALE = METADATA['scale']
 def replace_cube(root, scene_dir=None):
     """Keep legacy body/joint names for the shared dynamics and contact API."""
     body = root.find(".//body[@name='red_cube']")
-    body.set('pos', f'0.12 0.25 {0.60 + POT_HEIGHT / 2 + .001}')
+    body.set('pos', f'0.25 -0.12 {0.60 + POT_HEIGHT / 2 + .001}')
     body.remove(body.find('geom'))
     mass = .08
     inertial = body.find('inertial')

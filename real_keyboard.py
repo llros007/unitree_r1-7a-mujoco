@@ -29,7 +29,7 @@ import numpy as np
 from environment import ArmEnvironment, tcp_pose_at
 from main import HELP as SIM_HELP, KeyboardViewer
 from so101_leader import (DEFAULT_SIGNS, DEFAULT_TRAVEL_DEG, LeaderReader, absolute_joint_target,
-                          joint_target, load_absolute_points)
+                          gripper_sides_deg, gripper_target, joint_target, load_absolute_points)
 from xle_gripper import CLOSE_ANGLE, OPEN_ANGLE
 
 ROOT = Path(__file__).resolve().parent
@@ -58,7 +58,8 @@ Space：只控制仿真夹爪/显示标记，不驱动真机夹爪舵机。
 退出或故障会停驱动，机械臂可能失去主动支撑。
 退出：MuJoCo窗口按Esc或点关闭；终端输入q后回车也可退出。
 """
-LEADER_HELP = 'SO-101 主臂：点击窗口，按住 Space 跟随，松开保持；P 暂停，Esc 退出。'
+LEADER_HELP = ('SO-101 主臂：点击窗口，按住 Space 跟随，松开保持；P 暂停，Esc 退出。\n'
+               'C：一键把盆栽放回原来的位置，机械臂保持不动。')
 
 
 def parse_state(line):
@@ -258,6 +259,7 @@ class Session:
         self.home_results = queue.Queue()
         self.last_compensation_at = None
         self.leader = None
+        self.gripper_sides = (-50., 50.)
         self.leader_anchor = None
         self.input_at = time.monotonic()
         self.thread = threading.Thread(target=self.run, name='r1-control', daemon=True)
@@ -306,6 +308,27 @@ class Session:
         e.target_position, e.target_rotation = tcp_pose_at(e, e.ik_data, target)
         e.update_marker()
         c.joint_status = 'Absolute follow' if absolute_points is not None else 'Following SO-101'
+
+    def follow_leader_gripper(self):
+        if self.leader is None:
+            return
+        degrees = getattr(self.leader, 'gripper_deg', None)
+        if degrees is None:
+            return
+        goal = gripper_target(degrees, OPEN_ANGLE, CLOSE_ANGLE, *self.gripper_sides)
+        self.env.gripper_goal = goal
+        self.env.gripper_open = goal > (OPEN_ANGLE + CLOSE_ANGLE) / 2
+
+    def restore_object(self):
+        e = self.env
+        joint = e.model.joint('cube_free')
+        qadr = int(e.cube_q)
+        dadr = int(e.model.jnt_dofadr[joint.id])
+        e.data.qpos[qadr:qadr + 7] = e.model.qpos0[qadr:qadr + 7]
+        e.data.qvel[dadr:dadr + 6] = 0
+        mujoco.mj_forward(e.model, e.data)
+        self.control.joint_status = '盆栽已放回原位'
+        print('盆栽已放回原位', flush=True)
 
     def cancel_home_planning(self):
         self.home_generation += 1
@@ -398,6 +421,9 @@ class Session:
                 key, action, mods = self.events.get_nowait()
             except queue.Empty:
                 break
+            if action == glfw.PRESS and key == glfw.KEY_C and bus is None:
+                self.restore_object()
+                continue
             if self.leader is not None and key == glfw.KEY_SPACE:
                 if action == glfw.PRESS and not e.paused:
                     c.keys.add(key)
@@ -431,6 +457,7 @@ class Session:
                 e.paused = True
                 print('窗口超过0.5秒未处理输入，已暂停保持；窗口恢复后按 P 继续', flush=True)
         if self.leader is not None:
+            self.follow_leader_gripper()
             leader_started = time.monotonic()
             self.update_leader(not e.paused)
             if e.paused or glfw.KEY_SPACE not in c.keys:
@@ -483,6 +510,7 @@ class Session:
         bus = None
         try:
             if getattr(self.args, 'leader_port', None):
+                self.gripper_sides = gripper_sides_deg(self.args.leader_calib)
                 self.leader = LeaderReader(self.args.leader_python, self.args.leader_port, self.args.leader_calib)
                 deadline = time.monotonic() + 15.
                 while self.leader.sample() is None:
@@ -597,7 +625,9 @@ class RealKeyboardViewer(KeyboardViewer):
         super().__init__(env)
         if getattr(session.args, 'leader_port', None):
             self.control_help = ('SO-101 LEADER\nHold SPACE: follow | Release: hold\n'
-                                 'P: pause/resume | ESC: exit\nMouse: left orbit | right pan | wheel zoom')
+                                 'C: put the plant back\n'
+                                 'P: pause | ESC: exit\n'
+                                 'Mouse: left orbit | right pan | wheel zoom')
 
     def on_key(self, window, key, scancode, action, mods):
         if key == glfw.KEY_ESCAPE and action == glfw.PRESS:
